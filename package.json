@@ -4,7 +4,8 @@
   "description": "Personal budget tracking application.",
   "main": "index.js",
   "scripts": {
-    "test": "test.js"
+    "test": "echo \"Error: no test specified.\" && exit 1",
+    "start": "node index.js"
   },
   "repository": {
     "type": "git",
