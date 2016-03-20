@@ -20,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/paullj1/My-Personal-Budget/issues"
   },
-  "homepage": "https://github.com/paullj1/My-Personal-Budget#readme"
+  "homepage": "https://github.com/paullj1/My-Personal-Budget#readme",
+  "dependencies": {
+    "orm": "^2.1.30"
+  }
 }
