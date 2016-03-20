@@ -1,0 +1,23 @@
+{
+  "name": "my-personal-budget",
+  "version": "0.0.1",
+  "description": "Personal budget tracking application.",
+  "main": "index.js",
+  "scripts": {
+    "test": "test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paullj1/My-Personal-Budget.git"
+  },
+  "keywords": [
+    "personal",
+    "budget"
+  ],
+  "author": "Paul Jordan and Chip Van Patten",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/paullj1/My-Personal-Budget/issues"
+  },
+  "homepage": "https://github.com/paullj1/My-Personal-Budget#readme"
+}
