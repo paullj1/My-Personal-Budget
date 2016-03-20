@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/paullj1/My-Personal-Budget#readme",
   "dependencies": {
-    "orm": "^2.1.30"
+    "orm": "^2.1.30",
+    "pg": "^4.5.1"
   }
 }
