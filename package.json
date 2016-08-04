@@ -18,6 +18,7 @@
   "scripts": {
     "start": "tsc && concurrently \"npm run tsc:w\" \"npm run lite\" ",
     "lite": "lite-server",
+    "serve": "http-server -p process.env.PORT",
     "postinstall": "typings install",
     "tsc": "tsc",
     "tsc:w": "tsc -w",
@@ -42,6 +43,7 @@
     "zone.js": "^0.6.12",
     "angular2-in-memory-web-api": "0.0.14",
     "bootstrap": "^3.3.6",
+    "http-server": "^0.9.0",
     "typings":"^1.0.4"
   },
   "devDependencies": {
