@@ -6,6 +6,7 @@ capybara-*.html
 /db/*.sqlite3
 /db/*.sqlite3-journal
 /db/dev/
+start_db.sh
 /public/system
 /coverage/
 /spec/tmp
