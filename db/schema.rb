@@ -24,7 +24,7 @@ ActiveRecord::Schema.define(version: 20161025001806) do
     t.index ["user_id"], name: "index_budgets_on_user_id", using: :btree
   end
 
-  create_table "transactions", force: :cascade do |t|
+  create_table "transacts", force: :cascade do |t|
     t.string   "description"
     t.integer  "budget_id"
     t.integer  "user_id"
@@ -32,8 +32,8 @@ ActiveRecord::Schema.define(version: 20161025001806) do
     t.float    "amount"
     t.datetime "created_at",  null: false
     t.datetime "updated_at",  null: false
-    t.index ["budget_id"], name: "index_transactions_on_budget_id", using: :btree
-    t.index ["user_id"], name: "index_transactions_on_user_id", using: :btree
+    t.index ["budget_id"], name: "index_transacts_on_budget_id", using: :btree
+    t.index ["user_id"], name: "index_transacts_on_user_id", using: :btree
   end
 
   create_table "users", force: :cascade do |t|
@@ -54,6 +54,6 @@ ActiveRecord::Schema.define(version: 20161025001806) do
   end
 
   add_foreign_key "budgets", "users"
-  add_foreign_key "transactions", "budgets"
-  add_foreign_key "transactions", "users"
+  add_foreign_key "transacts", "budgets"
+  add_foreign_key "transacts", "users"
 end

@@ -1,4 +1,4 @@
-class Transaction < ApplicationRecord
+class Transact < ApplicationRecord
   belongs_to :budget
 	validates :description,  presence: true, length: { maximum: 500 }
 	validates :amount,  presence: true, numericality: { greater_than: 0 }
