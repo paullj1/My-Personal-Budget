@@ -1,4 +1,4 @@
-class BudgetController < ApplicationController
+class BudgetsController < ApplicationController
   before_action :authenticate_user!
   
   def index

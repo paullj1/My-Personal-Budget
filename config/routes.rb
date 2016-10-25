@@ -7,5 +7,6 @@ Rails.application.routes.draw do
   post '/users/:id/edit_profile' => 'users#update'
 
   resources :budgets
+  resources :transactions
   devise_for :users, controllers: { sessions: 'users/sessions' }
 end
