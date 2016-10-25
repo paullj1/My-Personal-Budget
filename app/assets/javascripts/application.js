@@ -16,4 +16,14 @@
 //= require turbolinks
 //= require bootstrap
 //= require bootstrap-notify
+//= require bootstrap-switch
 //= require_tree .
+
+(function() {
+  var draw_switches = function() {
+    $(".bootstrap-switches").bootstrapSwitch();
+  };
+
+  $(document).on('turbolinks:load', draw_switches);
+
+}).call(this);

@@ -1,0 +1,32 @@
+<%= form_for(@transact) do |f| %>
+	<%= render 'shared/error_messages', object: f.object %>
+	
+  <div class='form-group'>
+    <%= f.label 'Amount'  %>
+    <%= f.text_field :amount, class: 'form-control' %>
+  </div>
+	
+  <div class='form-group'>
+    <%= f.label 'Budget'  %>
+    <%= f.select(:budget_id, options_for_select(@budgets, @transact.budget_id), {}, class: 'form-control')%>
+  </div>
+
+  <div class='form-group'>
+  </div>
+
+  <div class='form-group'>
+    <%= f.label 'Description'  %>
+    <%= f.text_field :description, class: 'form-control' %>
+  </div>
+	
+  <div class='form-group'>
+    <%= f.check_box :credit, class: 'bootstrap-switches', 'data-on-text' => 'Credit', 'data-off-text' => 'Debit', 'data-off-color' => 'danger', 'data-on-color' => 'success' %>
+    <span class='pull-right'>
+      <%= f.submit yield(:button_text), class: 'btn btn-primary' %>&nbsp
+      <% if @transact.user_id %>
+        <%= button_to "Delete", transact_path(@transact), data: { confirm: "Are you sure?" }, method: :delete, class: 'btn btn-danger pull-right' %>
+      <% end %>
+    </span>
+  </div>
+
+<% end %>

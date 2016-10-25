@@ -10,28 +10,25 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema.define(version: 20161025001806) do
+ActiveRecord::Schema.define(version: 20161025201537) do
 
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
   create_table "budgets", force: :cascade do |t|
     t.string   "name"
-    t.integer  "authorized_users", default: [],              array: true
-    t.integer  "user_id"
-    t.datetime "created_at",                    null: false
-    t.datetime "updated_at",                    null: false
-    t.index ["user_id"], name: "index_budgets_on_user_id", using: :btree
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
   end
 
   create_table "transacts", force: :cascade do |t|
     t.string   "description"
     t.integer  "budget_id"
     t.integer  "user_id"
-    t.boolean  "credit"
+    t.boolean  "credit",      default: false
     t.float    "amount"
-    t.datetime "created_at",  null: false
-    t.datetime "updated_at",  null: false
+    t.datetime "created_at",                  null: false
+    t.datetime "updated_at",                  null: false
     t.index ["budget_id"], name: "index_transacts_on_budget_id", using: :btree
     t.index ["user_id"], name: "index_transacts_on_user_id", using: :btree
   end
@@ -53,7 +50,13 @@ ActiveRecord::Schema.define(version: 20161025001806) do
     t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true, using: :btree
   end
 
-  add_foreign_key "budgets", "users"
+  create_table "users_budgets", id: false, force: :cascade do |t|
+    t.integer "user_id"
+    t.integer "budget_id"
+    t.index ["budget_id"], name: "index_users_budgets_on_budget_id", using: :btree
+    t.index ["user_id"], name: "index_users_budgets_on_user_id", using: :btree
+  end
+
   add_foreign_key "transacts", "budgets"
   add_foreign_key "transacts", "users"
 end

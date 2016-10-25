@@ -1,9 +1,14 @@
 class BudgetsController < ApplicationController
   before_action :authenticate_user!
 
+  def index
+    # Index should show all budgets for a user
+    @budgets = current_user.budget
+  end
+
   def show
 		@budget = Budget.find(params[:id])
-    @authorized_users = User.where(id: @budet.authorized_users.to_a).select(:id, :email)
+    @users = @budget.user
   end
 
   def new
@@ -12,6 +17,7 @@ class BudgetsController < ApplicationController
 
   def create
 		@budget = Budget.new(budget_params)
+    @budget.user<<current_user
 		if @budget.save
     	flash[:success] = "Successfully created new budget!"
       redirect_to root_url
@@ -26,7 +32,7 @@ class BudgetsController < ApplicationController
 
   def update
 		@budget = Budget.find(params[:id])
-		if @budget.update_attributes(problem_params)
+		if @budget.update_attributes(budget_params)
     	flash[:success] = "Successfully updated budget!"
       redirect_to root_url
 		else

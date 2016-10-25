@@ -1,9 +1,13 @@
 <%= form_for(@budget) do |f| %>
 	<%= render 'shared/error_messages', object: f.object %>
 	
-	<%= f.label 'Name'  %>
-  <%= f.text_field :name, class: 'form-control' %>
+  <div class='form-group'>
+    <%= f.label 'Name'  %>
+    <%= f.text_field :name, class: 'form-control' %>
+  </div>
 
-  <%= f.submit yield(:button_text), class: 'btn btn-primary' %>
+  <div class='form-group'>
+    <%= f.submit yield(:button_text), class: 'btn btn-primary pull-right' %>
+  </div>
 
 <% end %>
