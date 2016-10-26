@@ -5,6 +5,18 @@ class Budget < ApplicationRecord
 	validates :name,  presence: true, length: { maximum: 50 }
 	validates :payroll,  presence: true, numericality: { greater_than_or_equal_to: 0 }
 
+  def transactions_this_month
+    self.transact.where("created_at > ?", Date.today.at_beginning_of_month).order(:created_at)
+  end
+
+  def credits_this_month
+    self.transact.where("credit = ? created_at > ?", true, Date.today.at_beginning_of_month).sum(:amount)
+  end
+
+  def debits_this_month
+    self.transact.where("credit = ? AND created_at > ?", false, Date.today.at_beginning_of_month).sum(:amount)
+  end
+
   def credits(time=30.days)
     self.transact.where("credit = ? AND created_at > ?", true, DateTime.now-time).sum(:amount)
   end

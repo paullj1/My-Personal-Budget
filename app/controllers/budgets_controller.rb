@@ -62,7 +62,7 @@ class BudgetsController < ApplicationController
       redirect_to budgets_path
     end
 
-    @budget.user<<@user
+    @budget.user.delete(@user)
     if @budget.save
       flash[:success] = "Successfully revoked budget permissions from #{@user.email}!"
     else
