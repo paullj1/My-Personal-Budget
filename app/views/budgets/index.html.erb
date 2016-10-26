@@ -44,12 +44,16 @@
                 <% end %>
                 <% budget.user.each do |user| %>
                   <% if user.id != current_user.id %>
-                    <li class='list-group-item'>
-                      <%= user.email %>
-                      <%= form_tag unshare_budget_path(budget.id), method: 'post' do %>
-                        <%= hidden_field_tag 'user_id', user.id %>
-                        <%= submit_tag 'Remove', class: 'btn btn-primary pull-right' %>
-                      <% end %>
+                    <li class='list-group-item' style='display:block'>
+                      <h4 style='display:inline-block'><%= user.email %></h4>
+                      <span class='pull-right'>
+                        <%= button_to unshare_budget_path(budget.id), method: :post, class: 'btn btn-danger',
+                              params: { user_id: user.id },
+                              data:   { confirm: 'Are you sure?' }, 
+                              form:   { style: 'display:inline-block;'} do %>
+                          <span class='glyphicon glyphicon-trash' aria-hidden='true'></span>
+                        <% end %>
+                      </span>
                     </li>
                   <% end %>
                 <% end %>
