@@ -1,1 +1,9 @@
 <h1>Welcome to MyPersonalBudget!</h1>
+
+<section>
+  <div class="panel-group" id="budgets" role="tablist">
+    <%= render @budgets %>
+  </div>
+</section>
+
+<%= link_to 'New', new_transact_path, class: 'btn btn-primary' %>

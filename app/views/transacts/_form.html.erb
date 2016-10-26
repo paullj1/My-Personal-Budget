@@ -22,9 +22,9 @@
   <div class='form-group'>
     <%= f.check_box :credit, class: 'bootstrap-switches', 'data-on-text' => 'Credit', 'data-off-text' => 'Debit', 'data-off-color' => 'danger', 'data-on-color' => 'success' %>
     <span class='pull-right'>
-      <%= f.submit yield(:button_text), class: 'btn btn-primary' %>&nbsp
+      <%= f.submit yield(:button_text), class: 'btn btn-primary' %>
       <% if @transact.user_id %>
-        <%= button_to "Delete", transact_path(@transact), data: { confirm: "Are you sure?" }, method: :delete, class: 'btn btn-danger pull-right' %>
+        <%= link_to "Delete", transact_path(@transact), data: { confirm: "Are you sure?" }, method: :delete, class: 'btn btn-danger' %>
       <% end %>
     </span>
   </div>

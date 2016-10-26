@@ -1,5 +1,6 @@
 class BudgetsController < ApplicationController
   before_action :authenticate_user!
+  before_action :permission?, only: [:show, :edit, :update, :destroy, :share, :unshare]
 
   def index
     # Index should show all budgets for a user
@@ -40,9 +41,70 @@ class BudgetsController < ApplicationController
 		end
   end
 
+  def destroy
+    budget = Budget.find(params[:id])
+		budget.destroy
+    flash[:success] = "Budget deleted!"
+    redirect_to root_url
+  end
+
+  def unshare
+    @budget = Budget.find(params[:id])
+    @user = User.find(params[:user_id])
+
+    unless @user
+      flash[:danger] = "Invalid user id."
+      redirect_to budgets_path
+    end
+
+    if @user.id == current_user.id
+      flash[:warning] = "Can't remove yourself!"
+      redirect_to budgets_path
+    end
+
+    @budget.user<<@user
+    if @budget.save
+      flash[:success] = "Successfully revoked budget permissions from #{@user.email}!"
+    else
+      flash[:danger] = "Couldn't revoke budget permission from #{@user.email}."
+    end
+    redirect_to budgets_path
+
+  end
+
+  def share
+    @budget = Budget.find(params[:id])
+    @user = User.find_by(email: params[:user][:email])
+
+    unless @user
+      flash[:danger] = "Couldn't share budget with #{params[:user][:email]}, user not found."
+      redirect_to budgets_path
+      return
+    end
+
+    if @user.id == current_user.id
+      flash[:warning] = "Can't share budget with yourself!"
+      redirect_to budgets_path
+    end
+
+    @budget.user<<@user
+    if @budget.save
+      flash[:success] = "Successfully shared budget with #{@user.email}!"
+    else
+      flash[:danger] = "Couldn't share budget with #{@user.email}."
+    end
+    redirect_to budgets_path
+  end
+
   private
 		def budget_params
 			params.require(:budget).permit(:name)
 		end
+
+    def permission?
+      @budget = Budget.find(params[:id])
+      @budget.user_ids.include? current_user.id
+    end
+      
 
 end

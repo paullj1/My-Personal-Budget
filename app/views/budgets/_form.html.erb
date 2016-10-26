@@ -7,7 +7,12 @@
   </div>
 
   <div class='form-group'>
-    <%= f.submit yield(:button_text), class: 'btn btn-primary pull-right' %>
+    <span class='pull-right'>
+      <%= f.submit yield(:button_text), class: 'btn btn-primary' %>
+      <% unless @budget.user.empty? %>
+        <%= link_to "Delete", budget_path(@budget), data: { confirm: "Are you sure?" }, method: :delete, class: 'btn btn-danger' %>
+      <% end %>
+    </span>
   </div>
 
 <% end %>

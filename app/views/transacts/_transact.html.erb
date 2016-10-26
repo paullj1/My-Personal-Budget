@@ -1,0 +1,4 @@
+<a href=<%= edit_transact_path(transact.id) %> 
+   class="list-group-item<%= transact.credit ? ' list-group-item-success':'' %>" >
+  <%= "#{number_to_currency transact.amount}: #{h transact.description}" %>
+</a>

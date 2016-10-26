@@ -1,0 +1,88 @@
+<% provide(:title, 'Budgets') %>
+
+<%= content_tag :h1, 'Budget Administration' %>
+<%= content_tag :div, class: 'row' do %>
+
+<div class='panel-group' id='budgets' role='tablist'>
+<% @budgets.each do |budget| %>
+  <div class='panel panel-default'>
+    <div class='panel-heading' role='tab' id=<%= "budgetId#{budget.id}Heading" %> >
+      <% balance = budget.balance %>
+      <span class='pull-right'>
+        <%= content_tag :span, class: "#{balance > 0 ? 'text-success' : 'text-danger'}", style: 'padding-right:20px' do %>
+          <%= number_to_currency balance, negative_format: '(%u%n)' %>
+        <% end %>
+        <%= button_to budget_path(budget.id), method: :delete, class: 'btn btn-danger', 
+              data: { confirm: 'Are you sure?' }, 
+              form: {style: 'display:inline-block;'} do %>
+          <span class='glyphicon glyphicon-trash' aria-hidden='true'></span>
+        <% end %>
+      </span>
+      <h4>
+        <a role='button' data-toggle='collapse' data-parent='#budgets' 
+          href=<%= "#budgetCollapse#{budget.id}" %> aria-expanded='false' 
+          aria-controls=<%= "budgetCollapse#{budget.id}" %> >
+          <%= budget.name %>
+        </a>
+      </h4>
+    </div>
+    <div id=<%= "budgetCollapse#{budget.id}" %> 
+         class='panel-collapse collapse' role='tabpanel' 
+         aria-labelledby=<%= "budgetId#{budget.id}Heading" %> >
+      <div class='panel-body'>
+        <div class='row'>
+          <div class='col-md-6'>
+            <div class='panel panel-default'>
+              <div class='panel-heading'>
+                Users who can view this budget
+              </div>
+              <ul class='list-group'>
+                <% if budget.user.size == 1 %>
+                <li class='list-group-item'>
+                  This budget isn't shared with anyone!
+                </li>
+                <% end %>
+                <% budget.user.each do |user| %>
+                  <% if user.id != current_user.id %>
+                    <li class='list-group-item'>
+                      <%= user.email %>
+                      <%= form_tag unshare_budget_path(budget.id), method: 'post' do %>
+                        <%= hidden_field_tag 'user_id', user.id %>
+                        <%= submit_tag 'Remove', class: 'btn btn-primary pull-right' %>
+                      <% end %>
+                    </li>
+                  <% end %>
+                <% end %>
+              </ul>
+              <div class='panel-footer'>
+                <%= form_tag share_budget_path(budget.id), method: 'post', class: 'form-inline' do %>
+                  <div class='form-group'>
+                    <%= text_field :user, :email, class: 'form-control' %>
+                  </div>
+                  <%= submit_tag 'Share', class: 'btn btn-primary' %>
+                <% end %>
+              </div>
+            </div>
+          </div>
+          <div class='visible-xs'><br /></div>
+          <div class='col-md-6'>
+            <div class='panel panel-default'>
+              <div class='panel-heading'>
+                Stats for last thirty days
+              </div>
+              <ul class='list-group'>
+                <li class='list-group-item'>Average expense: <%= number_to_currency budget.avg_debit %></li>
+                <li class='list-group-item'>Biggest expense: <%= number_to_currency budget.max_debit %></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+<% end %>
+</div>
+<%= link_to 'Create', new_budget_path, class: 'btn btn-primary' %>
+
+<% end %>
+
