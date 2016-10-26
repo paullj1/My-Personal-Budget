@@ -21,7 +21,7 @@ class BudgetsController < ApplicationController
     @budget.user<<current_user
 		if @budget.save
     	flash[:success] = "Successfully created new budget!"
-      redirect_to root_url
+      redirect_to budgets_path
 		else
 			render 'new'
 		end
@@ -35,7 +35,7 @@ class BudgetsController < ApplicationController
 		@budget = Budget.find(params[:id])
 		if @budget.update_attributes(budget_params)
     	flash[:success] = "Successfully updated budget!"
-      redirect_to root_url
+      redirect_to budgets_path
 		else
 			render 'new'
 		end
@@ -45,7 +45,7 @@ class BudgetsController < ApplicationController
     budget = Budget.find(params[:id])
 		budget.destroy
     flash[:success] = "Budget deleted!"
-    redirect_to root_url
+    redirect_to budgets_path
   end
 
   def unshare
@@ -98,7 +98,7 @@ class BudgetsController < ApplicationController
 
   private
 		def budget_params
-			params.require(:budget).permit(:name)
+			params.require(:budget).permit(:name, :payroll)
 		end
 
     def permission?

@@ -68,9 +68,11 @@
           <div class='col-md-6'>
             <div class='panel panel-default'>
               <div class='panel-heading'>
-                Stats for last thirty days
+                Stats for rolling thirty day period:
               </div>
               <ul class='list-group'>
+                <li class='list-group-item'>Total Deposits: <%= number_to_currency budget.credits %></li>
+                <li class='list-group-item'>Total Expenses: <%= number_to_currency budget.debits %></li>
                 <li class='list-group-item'>Average expense: <%= number_to_currency budget.avg_debit %></li>
                 <li class='list-group-item'>Biggest expense: <%= number_to_currency budget.max_debit %></li>
               </ul>
