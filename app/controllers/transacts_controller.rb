@@ -52,7 +52,8 @@ class TransactsController < ApplicationController
 		end
 
     def owner?
-      Transact.find(params[:id]).user_id == current_user.id
+      owners = Transact.find(params[:id]).budget.user_ids
+      owners.include? current_user.id
     end
 
 end
