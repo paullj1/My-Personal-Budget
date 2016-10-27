@@ -100,3 +100,17 @@ footer {
   margin-top: 45px;
   @include box_sizing;
 }
+
+.panel-group .list-group {
+	margin-bottom: 0;
+}
+
+.panel-group .list-group .list-group-item {
+	border-radius: 0;
+	border-left: none;
+	border-right: none;
+}
+
+.panel-group .list-group .list-group-item:last-child {
+	border-bottom: none;
+}

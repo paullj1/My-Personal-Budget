@@ -26,11 +26,11 @@ class Budget < ApplicationRecord
   end
 
   def avg_debit(time=30.days)
-    self.transact.where("credit = ? AND created_at > ?", false, DateTime.now-time).average(:amount)
+    self.transact.where("credit = ? AND created_at > ?", false, DateTime.now-time).average(:amount).to_f
   end
 
   def max_debit(time=30.days)
-    self.transact.where("credit = ? AND created_at > ?", false, DateTime.now-time).maximum(:amount)
+    self.transact.where("credit = ? AND created_at > ?", false, DateTime.now-time).maximum(:amount).to_f
   end
 
   def balance
