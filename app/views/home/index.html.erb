@@ -1,7 +1,8 @@
-<section>
+<section class="col-md-6 col-md-offset-3">
   <div class="panel-group" id="budgets" role="tablist" aria-multiselectable="true">
     <%= render @budgets %>
   </div>
+  <%= link_to 'New', new_transact_path, class: 'btn btn-primary' %>
 </section>
 
-<%= link_to 'New', new_transact_path, class: 'btn btn-primary' %>
+<div class="clearfix"></div>
