@@ -1,5 +1,4 @@
 class TransactsController < ApplicationController
-  before_action :authenticate_user!
   before_action :owner?, only: [:show, :edit, :update, :destroy]
 
   def show

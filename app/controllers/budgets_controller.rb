@@ -1,5 +1,4 @@
 class BudgetsController < ApplicationController
-  before_action :authenticate_user!
   before_action :permission?, only: [:show, :edit, :update, :destroy, :share, :unshare]
 
   def index
