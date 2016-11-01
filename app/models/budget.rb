@@ -1,9 +1,20 @@
 class Budget < ApplicationRecord
-  after_create_commit { PayrollJob.perform_later self.id }
+  after_create_commit { self.run_payroll }
   has_and_belongs_to_many :user, :join_table => :users_budgets
   has_many :transact, dependent: :destroy, inverse_of: :budget
 	validates :name,  presence: true, length: { maximum: 50 }
 	validates :payroll,  presence: true, numericality: { greater_than_or_equal_to: 0 }
+
+  def run_payroll
+    @transact = Transact.new(description: "PAYROLL", credit: true, budget_id: budget_id, amount: self.payroll)
+    @transact.user_id = self.user.first
+
+    if @transact.save
+      # Update last run
+      self.payroll_run_at = DateTime.now
+      self.save
+    end
+  end
 
   def transactions_this_month
     self.transact.where("created_at > ?", Date.today.at_beginning_of_month).order(:created_at)

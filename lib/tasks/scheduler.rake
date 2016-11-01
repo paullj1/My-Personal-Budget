@@ -7,8 +7,8 @@ task :run_payroll => :environment do
 
       # Can retry if fails 
       if budget.payroll_run_at < Date.today.at_beginning_of_month
-        PayrollJob.perform_later budget.id
-        puts "  - payroll for #{budget.name} scheduled."
+        budget.run_payroll
+        puts "  - payroll for #{budget.name} complete."
       end
 
     end
