@@ -1,7 +1,7 @@
 desc "This task is called by the Heroku scheduler add-on"
 task :run_payroll => :environment do
   # Gets run every day, check for first of month
-  if Date.today == Date.today.at_beginning_of_month
+  if DateTime.now.day == 1 # scheduler runs in UTC, this makes sure we're in the right zone
     puts "Running Payroll..."
     Budget.all.each do |budget|
 
