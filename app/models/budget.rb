@@ -6,7 +6,7 @@ class Budget < ApplicationRecord
 	validates :payroll,  presence: true, numericality: { greater_than_or_equal_to: 0 }
 
   def run_payroll
-    @transact = Transact.new(description: "PAYROLL", credit: true, budget_id: budget_id, amount: self.payroll)
+    @transact = Transact.new(description: "PAYROLL", credit: true, budget_id: self.id, amount: self.payroll)
     @transact.user_id = self.user.first
 
     if @transact.save
