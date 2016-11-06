@@ -80,6 +80,10 @@ footer {
 
 #new-transact-float.affix-bottom {
   position: absolute;
+  .panel {
+    border: 0;
+    box-shadow: none;
+  }
   .panel-body {
     box-shadow: none;
   }
