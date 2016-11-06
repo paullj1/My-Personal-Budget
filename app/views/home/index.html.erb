@@ -1,8 +1,17 @@
-<section class="col-md-6 col-md-offset-3">
+<div id="budgets-container" class="col-md-6 col-md-offset-3">
   <div class="panel-group" id="budgets" role="tablist" aria-multiselectable="true">
     <%= render @budgets %>
   </div>
-  <%= link_to 'New', new_transact_path, class: 'btn btn-primary' %>
-</section>
+  <div id="new-transact">
+    <%= link_to 'New', new_transact_path, class: 'btn btn-primary' %>
+  </div>
+  <div class="hidden" id="new-transact-float" data-spay="affix">
+    <div class="panel panel-default">
+      <div class="panel-body">
+        <%= link_to 'New', new_transact_path, class: 'btn btn-primary' %>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="clearfix"></div>
