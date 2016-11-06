@@ -7,13 +7,13 @@ class TransactsController < ApplicationController
 
   def new
     @transact = Transact.new
-    @budgets = current_user.budget_select
+    @budgets = current_user.html_budgets
   end
 
   def create
 		@transact = Transact.new(transact_params)
     @transact.user_id = current_user.id
-    @budgets = current_user.budget_select
+    @budgets = current_user.html_budgets
 		if @transact.save
     	flash[:success] = "Successfully submitted new transaction!"
       redirect_to root_url
@@ -25,7 +25,7 @@ class TransactsController < ApplicationController
 
   def edit
 		@transact = Transact.find(params[:id])
-    @budgets = current_user.budget_select
+    @budgets = current_user.html_budgets
   end
 
   def update

@@ -5,7 +5,7 @@ class User < ApplicationRecord
          :recoverable, :rememberable, :trackable, :validatable
   has_and_belongs_to_many :budget, :join_table => :users_budgets
 
-  def budget_select
-    self.budget.select(:name, :id).map { |u| [u.name, u.id] }
+  def html_budgets
+    self.budget.order(:id).select(:name, :id).map {|u| [u.name, u.id] }
   end
 end

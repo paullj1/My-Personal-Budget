@@ -3,7 +3,7 @@ class BudgetsController < ApplicationController
 
   def index
     # Index should show all budgets for a user
-    @budgets = current_user.budget
+    @budgets = current_user.budget.order(:id)
   end
 
   def show
