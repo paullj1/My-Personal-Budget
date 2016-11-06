@@ -28,6 +28,10 @@ class Budget < ApplicationRecord
     self.transact.where("credit = ? AND created_at > ?", false, Time.zone.now.at_beginning_of_month).sum(:amount)
   end
 
+  def transactions(time=30.days)
+    self.transact.where("created_at > ?", Time.zone.now-time).order(:created_at)
+  end
+
   def credits(time=30.days)
     self.transact.where("credit = ? AND created_at > ?", true, Time.zone.now-time).sum(:amount)
   end
