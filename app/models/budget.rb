@@ -29,7 +29,7 @@ class Budget < ApplicationRecord
   end
 
   def transactions(time=30.days)
-    self.transact.where("created_at > ?", Time.zone.now-time).order(:created_at)
+    self.transact.where("created_at > ?", Time.zone.now-time).order(created_at: :desc)
   end
 
   def credits(time=30.days)
