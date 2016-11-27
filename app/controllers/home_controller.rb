@@ -4,7 +4,7 @@ class HomeController < ApplicationController
     @budgets = current_user.budget.order(:id)
     respond_to do |format|
       format.html # index.html.erb
-      format.json { render json: @budgets}
+      format.json { render json: @budgets, status: :ok }
     end
   end
 

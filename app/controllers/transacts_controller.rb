@@ -6,7 +6,7 @@ class TransactsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: @transact }
+      format.json { render json: @transact, status: :ok }
     end
   end
 
@@ -16,7 +16,7 @@ class TransactsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: {transact: @transact, budgets: @budgets } }
+      format.json { render json: {transact: @transact, budgets: @budgets }, status: :ok }
     end
   end
 
@@ -29,7 +29,7 @@ class TransactsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to root_url }
-        format.json { render json: { success: true } }
+        format.json { render json: {}, status: :created }
       end
 
 		else
@@ -37,7 +37,7 @@ class TransactsController < ApplicationController
 
       respond_to do |format|
         format.html { render 'new' }
-        format.json { render json: { success: false, transact: @transact, budgets: @budgets } }
+        format.json { render json: { transact: @transact, budgets: @budgets }, status: :unprocessable_entity }
       end
 		end
   end
@@ -48,7 +48,7 @@ class TransactsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: {transact: @transact, budgets: @budgets } }
+      format.json { render json: {transact: @transact, budgets: @budgets }, status: :ok }
     end
   end
 
@@ -59,13 +59,13 @@ class TransactsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to root_url }
-        format.json { render json: { success: true } }
+        format.json { render json: {}, status: :accepted }
       end
 		else
 
       respond_to do |format|
         format.html { render 'edit' }
-        format.json { render json: { success: false, transact: @transact } }
+        format.json { render json: @transact, status: :unprocessable_entity }
       end
 
 		end
@@ -78,7 +78,7 @@ class TransactsController < ApplicationController
 
     respond_to do |format|
       format.html { redirect_to root_url }
-      format.json { render json: { success: true } }
+      format.json { render json: {}, status: :ok }
     end
   end
 
@@ -89,7 +89,13 @@ class TransactsController < ApplicationController
 
     def owner?
       owners = Transact.find(params[:id]).budget.user_ids
-      owners.include? current_user.id
+      unless owners.include? current_user.id
+				flash[:danger] = "Access denied!"
+        respond_to do |format|
+          format.html { redirect_to root_url }
+          format.json { render json: {}, status: :forbidden }
+        end
+			end
     end
 
 end

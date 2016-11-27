@@ -7,7 +7,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: @budgets }
+      format.json { render json: @budgets, status: :ok }
     end
   end
 
@@ -17,7 +17,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: {budget: @budget, users: @users } }
+      format.json { render json: {budget: @budget, users: @users }, status: :ok }
     end
   end
 
@@ -26,7 +26,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: @budget }
+      format.json { render json: @budget, status: :ok }
     end
   end
 
@@ -38,14 +38,14 @@ class BudgetsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to budgets_path }
-        format.json { render json: { success: true } }
+        format.json { render json: @budget, status: :created }
       end
 
 		else
 
       respond_to do |format|
         format.html { render 'new' }
-        format.json { render json: { success: false, budget: @budget } }
+        format.json { render json: @budget, status: :unprocessable_entity }
       end
 
 		end
@@ -56,7 +56,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: @budget }
+      format.json { render json: @budget, status: :ok }
     end
   end
 
@@ -67,14 +67,14 @@ class BudgetsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to budgets_path }
-        format.json { render json: { success: true } }
+        format.json { render json: @budget, status: :accepted }
       end
 
 		else
 
       respond_to do |format|
         format.html { render 'edit' }
-        format.json { render json: { success: false, budget: @budget } }
+        format.json { render json: @budget, status: :unprocessable_entity }
       end
 
 		end
@@ -87,7 +87,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html { redirect_to budgets_path }
-      format.json { render json: { success: true } }
+      format.json { render json: {}, status: :ok }
     end
   end
 
@@ -100,7 +100,7 @@ class BudgetsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to budgets_path }
-        format.json { render json: { success: false } }
+        format.json { render json: {}, status: :not_found }
       end
     end
 
@@ -109,22 +109,22 @@ class BudgetsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to budgets_path }
-        format.json { render json: { success: false } }
+        format.json { render json: {}, status: :method_not_allowed }
       end
     end
 
     @budget.user.delete(@user)
     if @budget.save
       flash[:success] = "Successfully revoked budget permissions from #{@user.email}!"
-      @success = true
+      @status = :accepted
     else
       flash[:danger] = "Couldn't revoke budget permission from #{@user.email}."
-      @success = false
+      @status = :unprocessable_entity
     end
 
     respond_to do |format|
       format.html { redirect_to budgets_path }
-      format.json { render json: { success: @success } }
+      format.json { render json: {}, status: @status }
     end
 
   end
@@ -138,7 +138,7 @@ class BudgetsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to budgets_path }
-        format.json { render json: { success: false } }
+        format.json { render json: {}, status: :not_found }
       end
     end
 
@@ -147,22 +147,22 @@ class BudgetsController < ApplicationController
 
       respond_to do |format|
         format.html { redirect_to budgets_path }
-        format.json { render json: { success: false } }
+        format.json { render json: {}, status: :method_not_allowed }
       end
     end
 
     @budget.user<<@user
     if @budget.save
       flash[:success] = "Successfully shared budget with #{@user.email}!"
-      @success = true
+      @status = :accepted
     else
       flash[:danger] = "Couldn't share budget with #{@user.email}."
-      @success = false
+      @status = :unprocessable_entity
     end
 
     respond_to do |format|
       format.html { redirect_to budgets_path }
-      format.json { render json: { success: @success } }
+      format.json { render json: {}, status: @status }
     end
   end
 
@@ -173,7 +173,13 @@ class BudgetsController < ApplicationController
 
     def permission?
       @budget = Budget.find(params[:id])
-      @budget.user_ids.include? current_user.id
+      unless @budget.user_ids.include? current_user.id
+				flash[:danger] = "Access denied!"
+        respond_to do |format|
+          format.html { redirect_to root_url }
+          format.json { render json: {}, status: :forbidden }
+        end
+			end
     end
       
 
