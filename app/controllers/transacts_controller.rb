@@ -48,7 +48,7 @@ class TransactsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: {transact: @transact, budgets: @budgets }
+      format.json { render json: {transact: @transact, budgets: @budgets } }
     end
   end
 
