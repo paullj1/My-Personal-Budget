@@ -4,15 +4,30 @@ class BudgetsController < ApplicationController
   def index
     # Index should show all budgets for a user
     @budgets = current_user.budget.order(:id)
+
+    respond_to do |format|
+      format.html
+      format.json { render json: @budgets }
+    end
   end
 
   def show
 		@budget = Budget.find(params[:id])
     @users = @budget.user
+
+    respond_to do |format|
+      format.html
+      format.json { render json: {budget: @budget, users: @users } }
+    end
   end
 
   def new
     @budget = Budget.new
+
+    respond_to do |format|
+      format.html
+      format.json { render json: @budget }
+    end
   end
 
   def create
@@ -20,23 +35,48 @@ class BudgetsController < ApplicationController
     @budget.user<<current_user
 		if @budget.save
     	flash[:success] = "Successfully created new budget!"
-      redirect_to budgets_path
+
+      respond_to do |format|
+        format.html { redirect_to budgets_path }
+        format.json { render json: { success: true } }
+      end
+
 		else
-			render 'new'
+
+      respond_to do |format|
+        format.html { render 'new' }
+        format.json { render json: { success: false, budget: @budget } }
+      end
+
 		end
   end
 
   def edit
 		@budget = Budget.find(params[:id])
+
+    respond_to do |format|
+      format.html
+      format.json { render json: @budget }
+    end
   end
 
   def update
 		@budget = Budget.find(params[:id])
 		if @budget.update_attributes(budget_params)
     	flash[:success] = "Successfully updated budget!"
-      redirect_to budgets_path
+
+      respond_to do |format|
+        format.html { redirect_to budgets_path }
+        format.json { render json: { success: true } }
+      end
+
 		else
-			render 'new'
+
+      respond_to do |format|
+        format.html { render 'edit' }
+        format.json { render json: { success: false, budget: @budget } }
+      end
+
 		end
   end
 
@@ -44,7 +84,11 @@ class BudgetsController < ApplicationController
     budget = Budget.find(params[:id])
 		budget.destroy
     flash[:success] = "Budget deleted!"
-    redirect_to budgets_path
+
+    respond_to do |format|
+      format.html { redirect_to budgets_path }
+      format.json { render json: { success: true } }
+    end
   end
 
   def unshare
@@ -53,21 +97,35 @@ class BudgetsController < ApplicationController
 
     unless @user
       flash[:danger] = "Invalid user id."
-      redirect_to budgets_path
+
+      respond_to do |format|
+        format.html { redirect_to budgets_path }
+        format.json { render json: { success: false } }
+      end
     end
 
     if @user.id == current_user.id
       flash[:warning] = "Can't remove yourself!"
-      redirect_to budgets_path
+
+      respond_to do |format|
+        format.html { redirect_to budgets_path }
+        format.json { render json: { success: false } }
+      end
     end
 
     @budget.user.delete(@user)
     if @budget.save
       flash[:success] = "Successfully revoked budget permissions from #{@user.email}!"
+      @success = true
     else
       flash[:danger] = "Couldn't revoke budget permission from #{@user.email}."
+      @success = false
     end
-    redirect_to budgets_path
+
+    respond_to do |format|
+      format.html { redirect_to budgets_path }
+      format.json { render json: { success: @success } }
+    end
 
   end
 
@@ -77,22 +135,35 @@ class BudgetsController < ApplicationController
 
     unless @user
       flash[:danger] = "Couldn't share budget with #{params[:user][:email]}, user not found."
-      redirect_to budgets_path
-      return
+
+      respond_to do |format|
+        format.html { redirect_to budgets_path }
+        format.json { render json: { success: false } }
+      end
     end
 
     if @user.id == current_user.id
       flash[:warning] = "Can't share budget with yourself!"
-      redirect_to budgets_path
+
+      respond_to do |format|
+        format.html { redirect_to budgets_path }
+        format.json { render json: { success: false } }
+      end
     end
 
     @budget.user<<@user
     if @budget.save
       flash[:success] = "Successfully shared budget with #{@user.email}!"
+      @success = true
     else
       flash[:danger] = "Couldn't share budget with #{@user.email}."
+      @success = false
     end
-    redirect_to budgets_path
+
+    respond_to do |format|
+      format.html { redirect_to budgets_path }
+      format.json { render json: { success: @success } }
+    end
   end
 
   private

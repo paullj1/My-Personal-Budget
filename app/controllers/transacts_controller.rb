@@ -3,11 +3,21 @@ class TransactsController < ApplicationController
 
   def show
 		@transact = Transact.find(params[:id])
+
+    respond_to do |format|
+      format.html
+      format.json { render json: @transact }
+    end
   end
 
   def new
     @transact = Transact.new
     @budgets = current_user.html_budgets
+
+    respond_to do |format|
+      format.html
+      format.json { render json: {transact: @transact, budgets: @budgets } }
+    end
   end
 
   def create
@@ -16,25 +26,48 @@ class TransactsController < ApplicationController
     @budgets = current_user.html_budgets
 		if @transact.save
     	flash[:success] = "Successfully submitted new transaction!"
-      redirect_to root_url
+
+      respond_to do |format|
+        format.html { redirect_to root_url }
+        format.json { render json: { success: true } }
+      end
+
 		else
       @transact.user_id = nil # lets form hide the delete button
-			render 'new'
+
+      respond_to do |format|
+        format.html { render 'new' }
+        format.json { render json: { success: false, transact: @transact, budgets: @budgets } }
+      end
 		end
   end
 
   def edit
 		@transact = Transact.find(params[:id])
     @budgets = current_user.html_budgets
+
+    respond_to do |format|
+      format.html
+      format.json { render json: {transact: @transact, budgets: @budgets }
+    end
   end
 
   def update
 		@transact = Transact.find(params[:id])
 		if @transact.update_attributes(transact_params)
     	flash[:success] = "Successfully updated transaction!"
-      redirect_to root_url
+
+      respond_to do |format|
+        format.html { redirect_to root_url }
+        format.json { render json: { success: true } }
+      end
 		else
-			render 'edit'
+
+      respond_to do |format|
+        format.html { render 'edit' }
+        format.json { render json: { success: false, transact: @transact } }
+      end
+
 		end
   end
 
@@ -42,7 +75,11 @@ class TransactsController < ApplicationController
     transact = Transact.find(params[:id])
 		transact.destroy
     flash[:success] = "Transaction deleted!"
-    redirect_to root_url
+
+    respond_to do |format|
+      format.html { redirect_to root_url }
+      format.json { render json: { success: true } }
+    end
   end
 
   private
