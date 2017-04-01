@@ -6,7 +6,7 @@ task :run_payroll => :environment do
     Budget.all.each do |budget|
 
       # Can retry if fails 
-      if budget.payroll_run_at < Date.today.at_beginning_of_month
+      if budget.payroll_run_at and budget.payroll_run_at < Date.today.at_beginning_of_month
         budget.run_payroll
         puts "  - payroll for #{budget.name} complete."
       end
