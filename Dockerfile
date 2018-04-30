@@ -1,11 +1,11 @@
 # HackTheArch Dockerfile
 # VERSION 1.0
 
-FROM ruby:2.5
+FROM ruby:2.5.1
 MAINTAINER Paul Jordan <paullj1@gmail.com>
 
 HEALTHCHECK --interval=5m --timeout=3s \
-  CMD curl -kf https://localhost/ || exit 1
+  CMD curl -kf https://127.0.0.1/ || exit 1
 
 ARG secret
 
@@ -16,11 +16,11 @@ RUN apt-get update \
         postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir /hta
-WORKDIR /hta
-ADD Gemfile Gemfile.lock /hta/
+RUN mkdir /usr/src/mpb
+WORKDIR /usr/src/mpb
+ADD Gemfile Gemfile.lock /usr/src/mpb/
 RUN bundle install
-ADD . /hta
+ADD . /usr/src/mpb/
 RUN chown -R $USER:$USER .
 
 EXPOSE 3000
