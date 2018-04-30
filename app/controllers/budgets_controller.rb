@@ -34,6 +34,7 @@ class BudgetsController < ApplicationController
 		@budget = Budget.new(budget_params)
     @budget.user<<current_user
 		if @budget.save
+      @budget.run_payroll
     	flash[:success] = "Successfully created new budget!"
 
       respond_to do |format|
@@ -140,6 +141,7 @@ class BudgetsController < ApplicationController
         format.html { redirect_to budgets_path }
         format.json { render json: {}, status: :not_found }
       end
+      return
     end
 
     if @user.id == current_user.id
@@ -149,6 +151,7 @@ class BudgetsController < ApplicationController
         format.html { redirect_to budgets_path }
         format.json { render json: {}, status: :method_not_allowed }
       end
+      return
     end
 
     @budget.user<<@user
