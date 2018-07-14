@@ -1,7 +1,7 @@
 # HackTheArch Dockerfile
 # VERSION 1.0
 
-FROM ruby:2.5.1
+FROM ruby:2.5.1-alpine3.7
 MAINTAINER Paul Jordan <paullj1@gmail.com>
 
 HEALTHCHECK --interval=5m --timeout=3s \
@@ -9,12 +9,11 @@ HEALTHCHECK --interval=5m --timeout=3s \
 
 ARG secret
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
+RUN apk update && apk add \
+        build-base \
         nodejs \
         postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+        postgresql
 
 RUN mkdir /usr/src/mpb
 WORKDIR /usr/src/mpb
