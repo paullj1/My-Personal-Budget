@@ -1,22 +1,20 @@
-version: '2'
+version: '3.3'
 services:
   db:
-    image: postgres:10-alpine
+    image: postgres:11-alpine
     volumes:
-      - 'postgres:/var/lib/postgresql/data'
+      - 'db:/var/lib/postgresql/data'
   web:
     build: . 
     env_file: .env
-    command: bundle exec puma -C "config/puma.rb" -b "ssl://0.0.0.0:3000?key=certs/server.key&cert=certs/server.crt"
+    command: bundle exec puma -C "config/puma.rb" -b "ssl://[::]:3000?key=certs/server.key&cert=certs/server.crt"
+    ports:
+      - "2604:a880:800:10::28:d00a:443:3000"
     volumes:
       - 'mpb:/usr/src/mpb'
-    ports:
-      - "443:3000"
     depends_on:
       - db
-    external_links:
-      - db:db
 
 volumes:
+  db:
   mpb:
-  postgres:
