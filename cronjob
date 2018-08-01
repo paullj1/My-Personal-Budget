@@ -1,0 +1,4 @@
+#!/bin/bash
+
+docker exec 0ebd72a16133 bundle exec rake run_payroll
+
