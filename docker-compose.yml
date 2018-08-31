@@ -2,10 +2,12 @@ version: '3.3'
 services:
   db:
     image: postgres:11-alpine
+    restart: always
     volumes:
       - 'db:/var/lib/postgresql/data'
   web:
     build: . 
+    restart: always
     env_file: .env
     command: bundle exec puma -C "config/puma.rb" -b "ssl://[::]:3000?key=certs/server.key&cert=certs/server.crt"
     ports:
