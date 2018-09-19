@@ -1,4 +1,8 @@
 #!/bin/bash
 
-docker exec 0ebd72a16133 bundle exec rake run_payroll
+find /home/pj/budget_backup/ -ctime +6 -exec rm -f \{\} \;
+tar czvf /home/pj/budget_backup/backup.`date -u +%s`.tar.gz /var/lib/docker/volumes/mpb_db/_data/ /etc/cron.daily/budget_backup
 
+
+# hourly task:
+#docker exec mpb_web_1 bundle exec rake run_payroll
