@@ -1,4 +1,4 @@
-# HackTheArch Dockerfile
+# MyPersonalBudget Dockerfile
 # VERSION 1.0
 
 FROM ruby:2.5.1-alpine3.7
@@ -18,9 +18,8 @@ RUN apk update && apk add \
 RUN mkdir /usr/src/mpb
 WORKDIR /usr/src/mpb
 ADD Gemfile Gemfile.lock /usr/src/mpb/
-RUN bundle install
+RUN gem install bundler && bundle install 
 ADD . /usr/src/mpb/
-RUN chown -R daemon:daemon .
-USER daemon
 
+CMD [ "/bin/sh", "/usr/src/mpb/docker-entrypoint.sh" ]
 EXPOSE 3000
