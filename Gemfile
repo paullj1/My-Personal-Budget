@@ -2,7 +2,6 @@ source 'https://rubygems.org'
 ruby '>= 2.5'
 
 gem 'rails', '~> 5.2'
-gem 'bootsnap', '~>1.3', require: false
 gem 'pg', '~> 0.18'
 gem 'puma', '~> 3.0'
 gem 'sass-rails', '~> 5.0'
