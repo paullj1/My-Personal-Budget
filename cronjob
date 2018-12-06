@@ -10,7 +10,7 @@ chmod 400 /dev/shm/db_backup.gz
 # Compress and save new dump
 BACKUP_FILE=backup.`date -u +%s`.gz
 cp /dev/shm/db_backup.gz /home/pi/database_backups/$BACKUP_FILE
-scp -6 /dev/shm/db_backup.gz pi@\[2605:6000:1713:559:4350:def8:61b8:a728\]:./db_backups/$BACKUP_FILE
+scp -6 /dev/shm/db_backup.gz pi@backups:./db_backups/$BACKUP_FILE
 rm /dev/shm/db_backup.gz
 
 
