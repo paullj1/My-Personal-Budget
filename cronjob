@@ -1,8 +1,20 @@
 #!/bin/bash
+# Cleanup
+find /home/pi/database_backups/ -ctime +6 -exec rm -f \{\} \;
+ssh pi@2605:6000:1713:559:4350:def8:61b8:a728 'find /home/pi/db_backups/ -ctime +6 -exec rm -f \{\} \;'
 
-find /home/pj/budget_backup/ -ctime +6 -exec rm -f \{\} \;
-tar czvf /home/pj/budget_backup/backup.`date -u +%s`.tar.gz /var/lib/docker/volumes/mpb_db/_data/ /etc/cron.daily/budget_backup
+# Make new dump
+docker exec home_db.1.$(docker service ps -f 'name=home_db.1' home_db -q --no-trunc | head -n1) pg_dumpall | gzip > /dev/shm/db_backup.gz
+chmod 400 /dev/shm/db_backup.gz
+
+# Compress and save new dump
+BACKUP_FILE=backup.`date -u +%s`.gz
+cp /dev/shm/db_backup.gz /home/pi/database_backups/$BACKUP_FILE
+scp -6 /dev/shm/db_backup.gz pi@\[2605:6000:1713:559:4350:def8:61b8:a728\]:./db_backups/$BACKUP_FILE
+rm /dev/shm/db_backup.gz
 
 
 # hourly task:
-#docker exec mpb_web_1 bundle exec rake run_payroll
+#!/bin/bash
+# docker exec home_budget.1.$(docker service ps -f 'name=home_budget.1' home_budget -q --no-trunc | head -n1) rake run_payroll
+
