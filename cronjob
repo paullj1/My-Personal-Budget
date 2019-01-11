@@ -1,20 +1,3 @@
 #!/bin/bash
-# Cleanup
-find /home/pi/database_backups/ -ctime +6 -exec rm -f \{\} \;
-ssh pi@2605:6000:1713:559:4350:def8:61b8:a728 'find /home/pi/db_backups/ -ctime +6 -exec rm -f \{\} \;'
-
-# Make new dump
-docker exec home_db.1.$(docker service ps -f 'name=home_db.1' home_db -q --no-trunc | head -n1) pg_dumpall | gzip > /dev/shm/db_backup.gz
-chmod 400 /dev/shm/db_backup.gz
-
-# Compress and save new dump
-BACKUP_FILE=backup.`date -u +%s`.gz
-cp /dev/shm/db_backup.gz /home/pi/database_backups/$BACKUP_FILE
-scp -6 /dev/shm/db_backup.gz pi@backups:./db_backups/$BACKUP_FILE
-rm /dev/shm/db_backup.gz
-
-
-# hourly task:
-#!/bin/bash
-# docker exec home_budget.1.$(docker service ps -f 'name=home_budget.1' home_budget -q --no-trunc | head -n1) rake run_payroll
+docker exec home_budget.1.$(docker service ps -f 'name=home_budget.1' home_budget -q --no-trunc | head -n1) rake run_payroll
 
