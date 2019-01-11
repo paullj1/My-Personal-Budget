@@ -6,12 +6,12 @@ services:
     volumes:
       - 'db:/var/lib/postgresql/data'
   web:
-    build: . 
+    image: paullj1/mypersonalbudget
     restart: always
     env_file: .env
     command: bundle exec puma -C "config/puma.rb" -b "ssl://[::]:3000?key=certs/server.key&cert=certs/server.crt"
     ports:
-      - "2604:a880:800:10::28:d00a:443:3000"
+      - "443:3000"
     volumes:
       - 'mpb:/usr/src/mpb'
     depends_on:
