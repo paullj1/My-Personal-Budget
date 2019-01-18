@@ -73,9 +73,9 @@ Rails.application.configure do
     :address        => 'smtp.sendgrid.net',
     :port           => 587,
     :authentication => :plain,
-    :user_name      => ENV.fetch("SENDGRID_USERNAME") { "DISABLED" },
-    :password       => ENV.fetch("SENDGRID_PASSWORD") { "DISABLED" },
-    :domain         => 'paullj1.com',
+    :user_name      => File.read("/run/secrets/sendgrid_user") { "DISABLED" },
+    :password       => File.read("/run/secrets/sendgrid_pass") { "DISABLED" },
+    :domain         => ENV.fetch("HOST") {'localhost'},
     :enable_starttls_auto => true
   }
 
