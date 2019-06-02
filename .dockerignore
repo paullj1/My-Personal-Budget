@@ -1,0 +1,7 @@
+.*.swp
+.env*
+.git*
+Dockerfile
+Procfile
+README.md
+docker-compose.yml

@@ -1,31 +1,52 @@
 # MyPersonalBudget Dockerfile
-# VERSION 1.0
+# VERSION 2.0
 
-FROM ruby:2.5-alpine
-MAINTAINER Paul Jordan <paullj1@gmail.com>
-
-HEALTHCHECK --interval=30s --timeout=3s \
-  CMD curl -f http://127.0.0.1:3000/ || exit 1
-
-RUN apk update && apk add \
+################################################################################
+# Builder
+################################################################################
+FROM ruby:2.5-alpine as builder
+RUN apk add --no-cache --update \
         build-base \
         nodejs \
         libpq \
-        curl \
-        curl-dev \
         postgresql \
         libxml2-dev \
         postgresql-dev \
         postgresql-client
 
-RUN mkdir /usr/src/mpb
+WORKDIR /src
+COPY Gemfile* ./
+RUN bundle install -j4 --retry 3 \
+  && rm -rf /usr/local/bundle/cache/*.gem \
+  && find /usr/local/bundle/gems/ -name "*.c" -delete \
+  && find /usr/local/bundle/gems/ -name "*.o" -delete
+
+ADD . ./
+RUN mkdir -p ./tmp/cache ./log
+
+################################################################################
+# Production
+################################################################################
+FROM ruby:2.5-alpine as prod
+MAINTAINER Paul Jordan <paullj1@gmail.com>
+
+RUN apk add --no-cache --update \
+        nodejs \
+        postgresql-client \
+        tzdata \
+  && addgroup -g 1000 -S app \
+  && adduser -u 1000 -S app -G app
+    
 WORKDIR /usr/src/mpb
-ADD Gemfile Gemfile.lock /usr/src/mpb/
-RUN gem install bundler && bundle install 
-ADD . /usr/src/mpb/
+COPY --from=builder /usr/local/bundle/ /usr/local/bundle/
+COPY --from=builder --chown=app:app /src ./
 
 RUN echo -e '#!/bin/sh\ncd /usr/src/mpb\nrake run_payroll' > /etc/periodic/hourly/mpb \
   && chmod 777 /etc/periodic/hourly/mpb
 
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD echo -e 'require "net/http"\nNet::HTTP.get(URI("http://127.0.0.1:3000/"))' | ruby
+
+USER app
 CMD [ "/bin/sh", "/usr/src/mpb/docker-entrypoint.sh" ]
 EXPOSE 3000
