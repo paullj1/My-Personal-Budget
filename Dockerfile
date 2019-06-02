@@ -24,7 +24,7 @@ ADD Gemfile Gemfile.lock /usr/src/mpb/
 RUN gem install bundler && bundle install 
 ADD . /usr/src/mpb/
 
-RUN echo -e '#!/bin/bash\ncd /usr/src/mpb\nrake run_payroll' > /etc/periodic/hourly/mpb \
+RUN echo -e '#!/bin/sh\ncd /usr/src/mpb\nrake run_payroll' > /etc/periodic/hourly/mpb \
   && chmod 777 /etc/periodic/hourly/mpb
 
 CMD [ "/bin/sh", "/usr/src/mpb/docker-entrypoint.sh" ]

@@ -1,3 +1,0 @@
-#!/bin/bash
-docker exec home_budget.1.$(docker service ps -f 'name=home_budget.1' home_budget -q --no-trunc | head -n1) rake run_payroll
-
