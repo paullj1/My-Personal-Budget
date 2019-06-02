@@ -4,7 +4,7 @@
 FROM ruby:2.5-alpine
 MAINTAINER Paul Jordan <paullj1@gmail.com>
 
-HEALTHCHECK --interval=5m --timeout=3s \
+HEALTHCHECK --interval=30s --timeout=3s \
   CMD curl -f http://127.0.0.1:3000/ || exit 1
 
 RUN apk update && apk add \
