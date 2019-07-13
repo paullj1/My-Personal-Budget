@@ -127,3 +127,16 @@ footer {
 .panel-group .list-group .list-group-item:last-child {
 	border-bottom: none;
 }
+
+.btn-group-toggle .btn-primary:not(.active):hover,
+.btn-group-toggle .btn-primary:not(.active),
+.btn-group-toggle .btn-success:not(.active):hover,
+.btn-group-toggle .btn-success:not(.active),
+.btn-group-toggle .btn-danger:not(.active):hover,
+.btn-group-toggle .btn-danger:not(.active) {
+  color: #000;
+  border-color: #000;
+  background-color: $gray-medium-light;
+  background-image: none;
+}
+
