@@ -41,5 +41,5 @@ production:
   host: db
   username: budget
   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
-  password: <%= File.read("/run/secrets/budgetpass") %>
+  password: <%= File.file?("/run/secrets/budgetpass") ? File.read("/run/secrets/budgetpass") : '' %>
   database: budget
