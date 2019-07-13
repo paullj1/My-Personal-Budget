@@ -4,7 +4,7 @@
 ################################################################################
 # Builder
 ################################################################################
-FROM ruby:2.5-alpine as builder
+FROM ruby:2.6-alpine as builder
 RUN apk add --no-cache --update \
         build-base \
         nodejs \
@@ -16,7 +16,8 @@ RUN apk add --no-cache --update \
 
 WORKDIR /src
 COPY Gemfile* ./
-RUN bundle install -j4 --retry 3 \
+RUN gem install bundler:2.0.1 \
+  && bundle install -j4 --retry 3 \
   && rm -rf /usr/local/bundle/cache/*.gem \
   && find /usr/local/bundle/gems/ -name "*.c" -delete \
   && find /usr/local/bundle/gems/ -name "*.o" -delete
@@ -27,8 +28,7 @@ RUN mkdir -p ./tmp/cache ./log
 ################################################################################
 # Production
 ################################################################################
-FROM ruby:2.5-alpine as prod
-MAINTAINER Paul Jordan <paullj1@gmail.com>
+FROM ruby:2.6-alpine as prod
 
 RUN apk add --no-cache --update \
         nodejs \
