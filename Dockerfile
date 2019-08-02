@@ -41,7 +41,7 @@ WORKDIR /usr/src/mpb
 COPY --from=builder /usr/local/bundle/ /usr/local/bundle/
 COPY --from=builder --chown=app:app /src ./
 
-RUN echo -e '#!/bin/sh\ncd /usr/src/mpb\nrake run_payroll' > /etc/periodic/hourly/mpb \
+RUN echo -e '#!/bin/sh\ncd /usr/src/mpb\nbundle exec rake run_payroll' > /etc/periodic/hourly/mpb \
   && chmod 777 /etc/periodic/hourly/mpb
 
 HEALTHCHECK --interval=30s --timeout=3s \
