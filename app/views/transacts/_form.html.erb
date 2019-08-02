@@ -26,11 +26,11 @@
   <div class='form-group'>
     <div class='btn-group btn-group-toggle' data-toggle='buttons' id='transaction-type-selector'>
       <%= f.label :type_debit, class: "btn btn-danger #{@transact.credit? ? '' : 'active'}" do %>
-        <%= f.radio_button :credit, 'Debit', autocomplete: :off, checked: true %> Debit
+        <%= f.radio_button :credit, 'Debit', checked: !(@transact.credit?), autocomplete: :off %> Debit
       <% end %>
 
       <%= f.label :type_credit, class: "btn btn-success #{@transact.credit? ? 'active' : ''}" do %>
-        <%= f.radio_button :credit, 'Credit', autocomplete: :off, checked: true %> Credit
+        <%= f.radio_button :credit, 'Credit', checked: @transact.credit?, autocomplete: :off %> Credit
       <% end %>
 
       <% if @new_transact %>
