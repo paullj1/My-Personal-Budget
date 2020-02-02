@@ -15,7 +15,7 @@ gem 'jquery-rails'
 gem 'jquery-turbolinks'
 gem 'turbolinks', '~> 5.1'
 gem 'jbuilder', '~> 2.7'
-gem 'devise', '~> 4.4'
+gem 'devise', '~> 4.7'
 # gem 'bcrypt', '~> 3.1'
 
 group :development, :test do
