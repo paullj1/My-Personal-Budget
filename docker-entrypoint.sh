@@ -1,3 +1,3 @@
 #!/bin/sh
-crond
+sudo crond
 bundle exec puma -C "/usr/src/mpb/config/puma.rb" -b "tcp://0.0.0.0:3000"

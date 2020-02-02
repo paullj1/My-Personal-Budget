@@ -30,9 +30,10 @@ RUN mkdir -p ./tmp/cache ./log
 ################################################################################
 FROM ruby:2.6-alpine as prod
 
-RUN apk add --no-cache --update \
+RUN apk add --no-cache \
         nodejs \
         postgresql-client \
+        sudo \
         tzdata \
   && addgroup -g 1000 -S app \
   && adduser -u 1000 -S app -G app
@@ -47,6 +48,7 @@ RUN echo -e '#!/bin/sh\ncd /usr/src/mpb\nbundle exec rake run_payroll' > /etc/pe
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD echo -e 'require "net/http"\nNet::HTTP.get(URI("http://127.0.0.1:3000/"))' | ruby
 
+RUN echo 'app ALL=NOPASSWD: /usr/sbin/crond' >> /etc/sudoers
 USER app
 CMD [ "/bin/sh", "/usr/src/mpb/docker-entrypoint.sh" ]
 EXPOSE 3000
