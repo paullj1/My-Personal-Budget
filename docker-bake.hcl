@@ -8,7 +8,7 @@ target "web" {
   dockerfile = "Dockerfile"
   output = ["type=registry"]
   driver = "docker-container"
-  tags = ["docker.io/paullj1/mypersonalbudget:1.1.0",
+  tags = ["docker.io/paullj1/mypersonalbudget:1.1.1",
           "docker.io/paullj1/mypersonalbudget:latest"]
   platforms = ["linux/amd64", "linux/arm64", "linux/arm/v7"]
 }
