@@ -2,8 +2,9 @@
 development:
   adapter: postgresql
   encoding: unicode
-  host: db
-  username: budget
+  host: localhost
+  username: postgres
+  password: postgres
   database: mpb_dev
 
 # Warning: The database defined as "test" will be erased and
@@ -12,8 +13,9 @@ development:
 test:
   adapter: postgresql
   encoding: unicode
-  host: db
-  username: budget
+  host: localhost
+  username: postgres
+  password: postgres
   database: mpb_test
 
 # As with config/secrets.yml, you never want to store sensitive information,

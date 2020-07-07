@@ -2,7 +2,6 @@ class BudgetsController < ApplicationController
   before_action :permission?, only: [:show, :edit, :update, :destroy, :share, :unshare]
 
   def index
-    # Index should show all budgets for a user
     @budgets = current_user.budget.order(:id)
 
     respond_to do |format|

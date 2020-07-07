@@ -5,4 +5,9 @@ class Transact < ApplicationRecord
 	validates :credit, inclusion: { in: [true, false] }
 	validates :credit, exclusion: { in: [nil] }
 
+  scope :contains, ->(query) { 
+    where('CAST(amount AS varchar) LIKE :q OR'\
+          'description LIKE :q', q: query) 
+  }
+
 end

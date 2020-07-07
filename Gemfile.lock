@@ -67,6 +67,8 @@ GEM
       autoprefixer-rails (>= 5.2.1)
       sassc (>= 2.0.0)
     bootstrap-switch-rails (3.3.5)
+    bootstrap-will_paginate (0.0.11)
+      will_paginate
     builder (3.2.4)
     byebug (11.1.1)
     coffee-rails (4.2.2)
@@ -197,6 +199,7 @@ GEM
     websocket-driver (0.7.1)
       websocket-extensions (>= 0.1.0)
     websocket-extensions (0.1.4)
+    will_paginate (3.3.0)
     zeitwerk (2.3.0)
 
 PLATFORMS
@@ -208,6 +211,7 @@ DEPENDENCIES
   bootstrap-growl-rails
   bootstrap-sass
   bootstrap-switch-rails
+  bootstrap-will_paginate (~> 0.0)
   byebug
   coffee-rails (~> 4.2)
   devise (~> 4.7)
@@ -224,6 +228,7 @@ DEPENDENCIES
   turbolinks (~> 5.1)
   uglifier (~> 3.0)
   web-console
+  will_paginate (~> 3.1)
 
 RUBY VERSION
    ruby 2.7.0p0

@@ -16,7 +16,7 @@
        class="panel-collapse collapse" role="tabpanel" 
        aria-labelledby="<%= "budgetId#{budget.id}Heading" %>" >
     <ul class="list-group">
-      <%= render budget.transactions %>
+      <%= render budget.transactions(query=query) %>
     </ul>
   </div>
 </div>

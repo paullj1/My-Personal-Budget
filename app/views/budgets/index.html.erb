@@ -24,15 +24,16 @@
       </span>
       <h4>
         <a role='button' data-toggle='collapse' data-parent='#budgets' 
-          href=<%= "#budgetCollapse#{budget.id}" %> aria-expanded='false' 
+          href=<%= "#budgetCollapse#{budget.id}" %> 
+          aria-expanded="<%= expand?(params, budget.id) %>"
           aria-controls=<%= "budgetCollapse#{budget.id}" %> >
           <%= budget.name %>
         </a>
       </h4>
     </div>
     <div id=<%= "budgetCollapse#{budget.id}" %> 
-         class='panel-collapse collapse' role='tabpanel' 
-         aria-labelledby=<%= "budgetId#{budget.id}Heading" %> >
+         class="panel-collapse collapse<%= " in" if expand?(params, budget.id) %>"
+         role='tabpanel' aria-labelledby=<%= "budgetId#{budget.id}Heading" %> >
       <div class='panel-body'>
         <div class='row'>
           <div class='col-md-6'>
@@ -84,6 +85,29 @@
                 <li class='list-group-item'>Average expense: <%= number_to_currency budget.avg_debit %></li>
                 <li class='list-group-item'>Biggest expense: <%= number_to_currency budget.max_debit %></li>
               </ul>
+            </div>
+          </div>
+        </div>
+        <div class='row'>
+          <div class='container'>
+            <% transacts = budget.transactions(query=params["search_#{budget.id}"], time=0)
+                                 .paginate page: params["budget_#{budget.id}"], per_page: 50 %>
+            <div style='padding-top:15px'>
+              <h4 class='col-sm-6'>Transactions</h4>
+            <%= form_tag budgets_path, method: :get, class: 'form-inline text-right', style: 'padding-bottom: 10px' do %>
+              <div class='form-group'> 
+                <%= text_field_tag "search_#{budget.id}", params["search_#{budget.id}"], placeholder: 'Search...', class: 'form-control' %>
+                <%= submit_tag 'Search', class: 'form-control' %>
+              </div>
+            <% end %>
+            </div>
+
+            <div class='text-center'>
+              <%= will_paginate transacts, param_name: "budget_#{budget.id}" %>
+            </div>
+            <%= render transacts %>
+            <div class='text-center'>
+              <%= will_paginate transacts, param_name: "budget_#{budget.id}" %>
             </div>
           </div>
         </div>

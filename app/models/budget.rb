@@ -27,8 +27,26 @@ class Budget < ApplicationRecord
     self.transact.where("credit = ? AND created_at > ?", false, Time.zone.now.at_beginning_of_month).sum(:amount)
   end
 
-  def transactions(time=30.days)
-    self.transact.where("created_at > ?", Time.zone.now-time).order(created_at: :desc)
+  def all_transactions
+    self.transact.order(created_at: :desc)
+  end
+
+  def transactions(query="", time=30.days)
+    if query.nil? or query.empty?
+      if time == 0
+        self.transact.order(created_at: :desc)
+      else
+        self.transact
+          .where("created_at > ?", Time.zone.now-time)
+          .order(created_at: :desc)
+      end
+    else
+      self.transact
+        .where('CAST(amount AS varchar) LIKE :q OR ' \
+               'description LIKE :q',
+               q: "%#{query}%")
+        .order(created_at: :desc)
+    end
   end
 
   def credits(time=30.days)
