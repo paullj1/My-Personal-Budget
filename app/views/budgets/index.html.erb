@@ -88,26 +88,51 @@
             </div>
           </div>
         </div>
-        <div class='row'>
-          <div class='container'>
+        <br />
+        <div class='row container'>
+          <div class='panel panel-default'>
+            <div class='panel-heading'>
+              <h5 style='display:inline-block'>Transactions</h5>
+              <span class='pull-right hidden-xs'>
+                <%= form_tag budgets_path, method: :get, class: 'form-inline', style: 'display:flex; padding-bottom: 10px' do %>
+                  <div class='input-group'> 
+                    <%= text_field_tag "search_#{budget.id}", params["search_#{budget.id}"], placeholder: 'Search...', class: 'form-control' %>
+                    <span class='input-group-btn'>
+                      <%= button_tag '', class: 'btn btn-default' do %>
+                        <span class='glyphicon glyphicon-search' aria-hidden='true'></span>
+                      <% end %>
+                    </span>
+                  </div>
+                <% end %>
+              </span>
+            </div>
+
+            <div class='visible-xs' style='padding:10px'>
+              <%= form_tag budgets_path, method: :get, class: 'form-inline', style: 'display:flex; padding-bottom: 10px' do %>
+                <div class='input-group'> 
+                  <%= text_field_tag "search_#{budget.id}", params["search_#{budget.id}"], placeholder: 'Search...', class: 'form-control' %>
+                  <span class='input-group-btn'>
+                    <%= button_tag '', class: 'btn btn-default' do %>
+                      <span class='glyphicon glyphicon-search' aria-hidden='true'></span>
+                    <% end %>
+                  </span>
+                </div>
+              <% end %>
+            </div>
+              
             <% transacts = budget.transactions(query=params["search_#{budget.id}"], time=0)
                                  .paginate page: params["budget_#{budget.id}"], per_page: 50 %>
-            <div style='padding-top:15px'>
-              <h4 class='col-sm-6'>Transactions</h4>
-            <%= form_tag budgets_path, method: :get, class: 'form-inline text-right', style: 'padding-bottom: 10px' do %>
-              <div class='form-group'> 
-                <%= text_field_tag "search_#{budget.id}", params["search_#{budget.id}"], placeholder: 'Search...', class: 'form-control' %>
-                <%= submit_tag 'Search', class: 'form-control' %>
-              </div>
-            <% end %>
-            </div>
 
             <div class='text-center'>
               <%= will_paginate transacts, param_name: "budget_#{budget.id}" %>
             </div>
+
             <%= render transacts %>
-            <div class='text-center'>
-              <%= will_paginate transacts, param_name: "budget_#{budget.id}" %>
+
+            <div class='panel-footer'>
+              <div class='text-center'>
+                <%= will_paginate transacts, param_name: "budget_#{budget.id}" %>
+              </div>
             </div>
           </div>
         </div>
