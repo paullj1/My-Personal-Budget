@@ -9,8 +9,11 @@
     <div class='panel-heading' role='tab' id=<%= "budgetId#{budget.id}Heading" %> >
       <% balance = budget.balance %>
       <span class='pull-right'>
+        <%= content_tag :span, style: 'padding-right:20px' do %>
+          Monthly: <%= number_to_currency budget.payroll %>
+        <% end %>
         <%= content_tag :span, class: "#{balance > 0 ? 'text-success' : 'text-danger'}", style: 'padding-right:20px' do %>
-          <%= number_to_currency balance, negative_format: '(%u%n)' %>
+          Balance: <%= number_to_currency balance, negative_format: '(%u%n)' %>
         <% end %>
         <%= link_to edit_budget_path(budget.id), class: 'btn btn-primary', 
               form: {style: 'display:inline-block;'} do %>
