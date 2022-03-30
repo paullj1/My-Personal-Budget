@@ -3,7 +3,7 @@ ruby '>= 2.7'
 
 gem 'rails', '~> 6.0'
 gem 'pg', '~> 0.18'
-gem 'puma', '~> 3.12'
+gem 'puma', '~> 4.3'
 gem 'sassc-rails', '~> 2.1'
 gem 'uglifier', '~> 3.0'
 gem 'coffee-rails', '~> 4.2'
