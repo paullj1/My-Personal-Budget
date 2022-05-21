@@ -2,8 +2,8 @@ source 'https://rubygems.org'
 ruby '>= 2.7'
 
 gem 'rails', '~> 6.0'
-gem 'pg', '~> 0.18'
-gem 'puma', '~> 3.12'
+gem 'pg', '~> 1.1'
+gem 'puma', '~> 4.3'
 gem 'sassc-rails', '~> 2.1'
 gem 'uglifier', '~> 3.0'
 gem 'coffee-rails', '~> 4.2'
@@ -20,6 +20,7 @@ gem 'jbuilder', '~> 2.7'
 gem 'bcrypt', '3.1.12' # Breaks on ARM; bad assembly code
 gem 'devise', '~> 4.7'
 gem 'bootstrap-will_paginate', '~> 0.0'
+gem 'net-smtp'
 
 group :development, :test do
   gem 'byebug', platform: :mri
