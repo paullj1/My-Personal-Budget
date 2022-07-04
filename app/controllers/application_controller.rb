@@ -1,7 +1,6 @@
 class ApplicationController < ActionController::Base
-  protect_from_forgery prepend: true, with: :exception
   before_action :authenticate_user!
-  skip_before_action :verify_authenticity_token, if: :json_request?
+  protect_from_forgery unless: -> { request.format.json? }
 
   protected
 

@@ -6,7 +6,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: @budgets, status: :ok }
+      format.json { render json: @budgets.to_json(methods: :balance), status: :ok }
     end
   end
 
@@ -16,7 +16,7 @@ class BudgetsController < ApplicationController
 
     respond_to do |format|
       format.html
-      format.json { render json: {budget: @budget, users: @users }, status: :ok }
+      format.json { render json: @budget.to_json(include: :transact), status: :ok }
     end
   end
 

@@ -1,6 +1,13 @@
 class TransactsController < ApplicationController
   before_action :owner?, only: [:show, :edit, :update, :destroy]
 
+  def index
+    @transacts = Transact.all()
+    respond_to do |format|
+      format.json { render json: @transacts, status: :ok }
+    end
+  end
+
   def show
     @transact = Transact.find(params[:id])
 
