@@ -62,7 +62,7 @@ class BudgetsController < ApplicationController
 
   def update
 		@budget = Budget.find(params[:id])
-		if @budget.update_attributes(budget_params)
+		if @budget.update(budget_params)
     	flash[:success] = "Successfully updated budget!"
 
       respond_to do |format|

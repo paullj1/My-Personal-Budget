@@ -136,7 +136,7 @@ class TransactsController < ApplicationController
         @t_params[:credit] = false
       end
 
-      if @transact.update_attributes(@t_params)
+      if @transact.update(@t_params)
         flash[:success] = "Successfully updated transaction!"
 
         respond_to do |format|
