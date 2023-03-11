@@ -2,7 +2,7 @@
 ################################################################################
 # Builder
 ################################################################################
-FROM ruby:3.1-alpine3.16 as builder
+FROM ruby:3.1.2-alpine3.16 as builder
 RUN apk add --no-cache \
         alpine-sdk \
         postgresql-dev \
@@ -23,7 +23,7 @@ RUN mkdir -p ./tmp/cache ./log
 ################################################################################
 # Production
 ################################################################################
-FROM ruby:3.1-alpine3.16 as prod
+FROM ruby:3.1.2-alpine3.16 as prod
 
 RUN apk add --no-cache \
         nodejs \
