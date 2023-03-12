@@ -2,7 +2,7 @@
 ################################################################################
 # Builder
 ################################################################################
-FROM ruby:3.1.2-alpine3.16 as builder
+FROM ruby:3.2-alpine as builder
 RUN apk add --no-cache \
         alpine-sdk \
         postgresql-dev \
@@ -23,7 +23,7 @@ RUN mkdir -p ./tmp/cache ./log
 ################################################################################
 # Production
 ################################################################################
-FROM ruby:3.1.2-alpine3.16 as prod
+FROM ruby:3.2-alpine as prod
 
 RUN apk add --no-cache \
         nodejs \
@@ -45,8 +45,7 @@ HEALTHCHECK --interval=30s --timeout=3s \
   CMD echo -e 'require "net/http"\nexit(Net::HTTP.get_response(URI("http://127.0.0.1:3000/")).code.to_i < 400)' | ruby
 
 RUN echo 'app ALL=NOPASSWD: /usr/sbin/crond' >> /etc/sudoers \
- && mkdir -m 777 -p tmp/pids \
- && ln -s /lib/ld-musl-aarch64.so.1 /lib/ld-linux-aarch64.so.1
+ && mkdir -m 777 -p tmp/pids
 USER app
 CMD [ "/bin/sh", "/usr/src/mpb/docker-entrypoint.sh" ]
 EXPOSE 3000
