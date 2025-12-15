@@ -1,9 +1,0 @@
-<a href=<%= edit_transact_path(transact.id) %> 
-   class="list-group-item<%= transact.credit ? ' list-group-item-success':'' %>" 
-   data-toggle="tooltip" data-placement="auto"
-   title="<%= distance_of_time_in_words transact.created_at, Time.now %> ago">
-    <%= "#{h transact.description.html_safe}" %>
-    <div class='pull-right'>
-      <%= "#{number_to_currency transact.amount}" %>
-    </div>
-</a>
