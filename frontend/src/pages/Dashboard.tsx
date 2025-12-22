@@ -705,6 +705,7 @@ const Dashboard = () => {
                                     Amount
                                     <input
                                       type="number"
+                                      inputMode="decimal"
                                       step="0.01"
                                       min={0.01}
                                       value={editingTxn.amount}
@@ -1031,6 +1032,7 @@ const Dashboard = () => {
                 Amount
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min={0.01}
                   value={newTxn.amount}
