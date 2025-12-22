@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FocusEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   useInfiniteQuery,
@@ -88,6 +88,10 @@ const ModalPortal = ({ children }: { children: ReactNode }) => {
     return <>{children}</>;
   }
   return createPortal(children, document.body);
+};
+
+const selectOnFocus = (event: FocusEvent<HTMLInputElement>) => {
+  event.currentTarget.select();
 };
 
 const Dashboard = () => {
@@ -730,6 +734,7 @@ const Dashboard = () => {
                                       step="0.01"
                                       min={0.01}
                                       value={editingTxn.amount}
+                                      onFocus={selectOnFocus}
                                       onChange={(e) =>
                                         setEditingTxn((prev) =>
                                           prev ? { ...prev, amount: Number(e.target.value) } : prev
@@ -867,9 +872,11 @@ const Dashboard = () => {
                     Receipt total
                     <input
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min={0.01}
                       value={receiptTotal}
+                      onFocus={selectOnFocus}
                       onChange={(e) => setReceiptTotal(Number(e.target.value))}
                       required
                     />
@@ -944,9 +951,11 @@ const Dashboard = () => {
                           Amount
                           <input
                             type="number"
+                            inputMode="decimal"
                             step="0.01"
                             min={0.01}
                             value={line.amount}
+                            onFocus={selectOnFocus}
                             onChange={(e) => updateItemLine(line.id, { amount: Number(e.target.value) })}
                           />
                         </label>
@@ -1060,6 +1069,7 @@ const Dashboard = () => {
                   step="0.01"
                   min={0.01}
                   value={newTxn.amount}
+                  onFocus={selectOnFocus}
                   onChange={(e) => setNewTxn((prev) => ({ ...prev, amount: Number(e.target.value) }))}
                   required
                 />
@@ -1171,7 +1181,15 @@ const Dashboard = () => {
               </label>
               <label>
                 Payroll
-                <input name="payroll" type="number" step="0.01" min={0} placeholder="Payroll" />
+                <input
+                  name="payroll"
+                  type="number"
+                  inputMode="decimal"
+                  step="0.01"
+                  min={0}
+                  placeholder="Payroll"
+                  onFocus={selectOnFocus}
+                />
               </label>
               <button type="submit" disabled={createBudget.isPending}>
                 {createBudget.isPending ? 'Creating…' : 'Create budget'}
@@ -1215,6 +1233,7 @@ const Dashboard = () => {
                 Payroll
                 <input
                   type="number"
+                  inputMode="decimal"
                   step="0.01"
                   min={0}
                   value={
@@ -1222,6 +1241,7 @@ const Dashboard = () => {
                       ? payrollEdit
                       : budgets.find((b) => b.id === settingsBudget)?.payroll || 0
                   }
+                  onFocus={selectOnFocus}
                   onChange={(e) => setPayrollEdit(Number(e.target.value))}
                 />
               </label>
