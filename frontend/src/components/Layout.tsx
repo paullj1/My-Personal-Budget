@@ -1,7 +1,7 @@
 import { PropsWithChildren, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 
-import { clearToken } from '../api/client';
+import { clearToken, hasAuthToken } from '../api/client';
 
 const Layout = ({ children }: PropsWithChildren) => {
   const location = useLocation();
@@ -11,14 +11,14 @@ const Layout = ({ children }: PropsWithChildren) => {
   const [toolbarOpen, setToolbarOpen] = useState(false);
 
   useEffect(() => {
-    const check = () => setAuthed(typeof window !== 'undefined' && !!localStorage.getItem('mpb_token'));
+    const check = () => setAuthed(hasAuthToken());
     check();
     window.addEventListener('storage', check);
     return () => window.removeEventListener('storage', check);
   }, []);
 
   useEffect(() => {
-    setAuthed(typeof window !== 'undefined' && !!localStorage.getItem('mpb_token'));
+    setAuthed(hasAuthToken());
   }, [location.pathname]);
 
   useEffect(() => {

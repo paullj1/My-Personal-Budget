@@ -23,15 +23,22 @@ func (h *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if cleanPath == "/" {
 		cleanPath = "/index.html"
 	}
+	servingIndex := cleanPath == "/index.html"
 	// Strip leading slash for filesystem lookup.
 	target := filepath.Join(h.staticDir, strings.TrimPrefix(cleanPath, "/"))
 
 	if fileExists(target) {
+		if servingIndex {
+			w.Header().Set("Cache-Control", "no-store")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
 		http.ServeFile(w, r, target)
 		return
 	}
 
 	indexPath := filepath.Join(h.staticDir, h.indexFile)
+	w.Header().Set("Cache-Control", "no-store")
 	http.ServeFile(w, r, indexPath)
 }
 

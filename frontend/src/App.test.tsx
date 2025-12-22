@@ -23,6 +23,7 @@ vi.mock('./api/client', () => {
 });
 
 const renderApp = () => {
+  localStorage.setItem('mpb_token', 'test-token');
   const client = new QueryClient();
   const routerFuture = { v7_startTransition: true, v7_relativeSplatPath: true };
   return render(

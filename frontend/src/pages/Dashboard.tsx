@@ -790,7 +790,10 @@ const Dashboard = () => {
                     <button
                       type="button"
                       className="secondary"
-                      onClick={() => transactionsQuery.fetchNextPage()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        transactionsQuery.fetchNextPage();
+                      }}
                       disabled={transactionsQuery.isFetchingNextPage}
                     >
                       {transactionsQuery.isFetchingNextPage ? 'Loading…' : 'Load more'}

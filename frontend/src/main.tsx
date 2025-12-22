@@ -6,7 +6,17 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import './styles.css';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        const status = (error as { status?: number }).status;
+        if (status === 401) return false;
+        return failureCount < 2;
+      }
+    }
+  }
+});
 const routerFuture = { v7_startTransition: true, v7_relativeSplatPath: true };
 const root = document.getElementById('root');
 
