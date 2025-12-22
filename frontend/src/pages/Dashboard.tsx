@@ -63,6 +63,13 @@ const INITIAL_TXN: NewTxnState = {
 
 const PAGE_SIZE = 20;
 const round2 = (value: number) => Math.round(value * 100) / 100;
+const numberFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+const formatNumber = (value: number) => numberFormatter.format(value);
+const formatHeadingBalance = (value: number) =>
+  value < 0 ? `(${formatNumber(Math.abs(value))})` : formatNumber(value);
 const newLine = (): ItemizedLine => ({
   id: Math.random().toString(36).slice(2, 10),
   budgetId: null,
@@ -635,11 +642,11 @@ const Dashboard = () => {
               <div className="accordion__header">
                 <div className="accordion__title">
                   <h2>{budget.name}</h2>
-                  <p className="muted">{budget.balance.toFixed(2)}</p>
+                  <p className={`muted ${negative ? 'negative' : ''}`}>{formatHeadingBalance(budget.balance)}</p>
                   {active && (
                     <p className="muted">
-                      Net {budget.balance.toFixed(2)} · Payroll {budget.payroll.toFixed(2)} · Credits{' '}
-                      {budget.credits.toFixed(2)} · Debits {budget.debits.toFixed(2)}
+                      Net {formatNumber(budget.balance)} · Payroll {formatNumber(budget.payroll)} · Credits{' '}
+                      {formatNumber(budget.credits)} · Debits {formatNumber(budget.debits)}
                     </p>
                   )}
                 </div>
@@ -680,11 +687,16 @@ const Dashboard = () => {
                       .flatMap((page) => page?.data ?? [])
                       .filter((txn): txn is Transaction => Boolean(txn));
                     const filtered = term
-                      ? flattened.filter(
-                          (txn) =>
-                            txn.description.toLowerCase().includes(term) ||
-                            txn.amount.toFixed(2).includes(term.replace(/[^0-9.-]/g, ''))
-                        )
+                      ? flattened.filter((txn) => {
+                          if (txn.description.toLowerCase().includes(term)) return true;
+                          const amountTerm = term.replace(/[^0-9.-]/g, '');
+                          if (!amountTerm) return false;
+                          const formatted = formatNumber(txn.amount);
+                          return (
+                            formatted.includes(amountTerm) ||
+                            formatted.replace(/,/g, '').includes(amountTerm)
+                          );
+                        })
                       : flattened;
                     if (filtered.length === 0 && !transactionsQuery.isLoading && !transactionsQuery.error) {
                       return <p className="muted">No transactions.</p>;
@@ -805,7 +817,7 @@ const Dashboard = () => {
                               </div>
                               <div className={`amount ${txn.credit ? 'positive' : 'negative'}`}>
                                 {txn.credit ? '+' : '-'}
-                                {txn.amount.toFixed(2)}
+                                {formatNumber(txn.amount)}
                               </div>
                             </>
                           )}
@@ -981,19 +993,19 @@ const Dashboard = () => {
                       <p className="eyebrow">Remainder</p>
                       <h3>Catch-all allocation</h3>
                       <p className="muted">
-                        Allocated {allocatedTotal.toFixed(2)} of {receiptTotal.toFixed(2)}. Remaining goes to{' '}
+                        Allocated {formatNumber(allocatedTotal)} of {formatNumber(receiptTotal)}. Remaining goes to{' '}
                         {catchAllBudget?.name || 'the catch-all'}.
                       </p>
                     </div>
                   </div>
                   {overAllocated ? (
                     <p className="error">
-                      Allocations exceed the receipt by {Math.abs(itemizeRemainder).toFixed(2)}. Trim a line item to
+                      Allocations exceed the receipt by {formatNumber(Math.abs(itemizeRemainder))}. Trim a line item to
                       continue.
                     </p>
                   ) : (
                     <div className="badge">
-                      Remainder {Math.max(itemizeRemainder, 0).toFixed(2)} -&gt;{' '}
+                      Remainder {formatNumber(Math.max(itemizeRemainder, 0))} -&gt;{' '}
                       {catchAllBudget?.name || 'select a budget'}
                     </div>
                   )}
@@ -1362,7 +1374,7 @@ const Dashboard = () => {
                     <label key={budget.id} className="toggle">
                       <div className="toggle__text">
                         <span className="toggle__label">{budget.name}</span>
-                        <span className="toggle__hint">Balance {budget.balance.toFixed(2)}</span>
+                        <span className="toggle__hint">Balance {formatNumber(budget.balance)}</span>
                       </div>
                       <span className="toggle__control">
                         <input
@@ -1396,7 +1408,7 @@ const Dashboard = () => {
                     <label key={budget.id} className="toggle">
                       <div className="toggle__text">
                         <span className="toggle__label">{budget.name}</span>
-                        <span className="toggle__hint">Balance {budget.balance.toFixed(2)}</span>
+                        <span className="toggle__hint">Balance {formatNumber(budget.balance)}</span>
                       </div>
                       <span className="toggle__control">
                         <input
@@ -1425,13 +1437,14 @@ const Dashboard = () => {
                   <h3>Review distribution</h3>
                 </div>
                 <p className="muted">
-                  Total to cover: {totalDeficit.toFixed(2)} · Per positive: {positiveAllocation[0]?.toFixed(2) || '0.00'}
+                  Total to cover: {formatNumber(totalDeficit)} · Per positive:{' '}
+                  {positiveAllocation[0] ? formatNumber(positiveAllocation[0]) : '0.00'}
                 </p>
               </div>
               {coverageShortfall && (
                 <p className="error">
-                  Selected positive budgets only cover {positiveCoverage.toFixed(2)} of {totalDeficit.toFixed(2)}. They will
-                  dip below zero.
+                  Selected positive budgets only cover {formatNumber(positiveCoverage)} of {formatNumber(totalDeficit)}.
+                  They will dip below zero.
                 </p>
               )}
               {wizardReady ? (
@@ -1443,7 +1456,7 @@ const Dashboard = () => {
                       if (!budget) return null;
                       return (
                         <p key={id}>
-                          {budget.name}: +{Math.abs(budget.balance).toFixed(2)}
+                          {budget.name}: +{formatNumber(Math.abs(budget.balance))}
                         </p>
                       );
                     })}
@@ -1455,7 +1468,7 @@ const Dashboard = () => {
                       if (!budget) return null;
                       return (
                         <p key={id}>
-                          {budget.name}: -{positiveAllocation[idx]?.toFixed(2) || '0.00'}
+                          {budget.name}: -{positiveAllocation[idx] ? formatNumber(positiveAllocation[idx]) : '0.00'}
                         </p>
                       );
                     })}
