@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   useInfiniteQuery,
   useMutation,
@@ -82,6 +83,13 @@ const splitEvenly = (total: number, buckets: number) => {
   return allocations;
 };
 
+const ModalPortal = ({ children }: { children: ReactNode }) => {
+  if (typeof document === 'undefined') {
+    return <>{children}</>;
+  }
+  return createPortal(children, document.body);
+};
+
 const Dashboard = () => {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -107,12 +115,25 @@ const Dashboard = () => {
   const [shareEmail, setShareEmail] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [showToolbarFilterToggle, setShowToolbarFilterToggle] = useState(false);
+  const modalOpen =
+    Boolean(newTxnBudget) || newBudgetOpen || Boolean(settingsBudget) || balanceWizardOpen || itemizeWizardOpen;
 
   useEffect(() => {
     const handler = () => setNewBudgetOpen(true);
     window.addEventListener('open-new-budget', handler);
     return () => window.removeEventListener('open-new-budget', handler);
   }, []);
+  useEffect(() => {
+    document.body.classList.toggle('modal-open', modalOpen);
+    document.documentElement.classList.toggle('modal-open', modalOpen);
+    if (modalOpen) {
+      setExpanded(null);
+    }
+    return () => {
+      document.body.classList.remove('modal-open');
+      document.documentElement.classList.remove('modal-open');
+    };
+  }, [modalOpen]);
 
   const budgetsQuery = useQuery({
     queryKey: ['budgets'],
@@ -808,8 +829,9 @@ const Dashboard = () => {
       </div>
 
       {itemizeWizardOpen && (
-        <div className="modal">
-          <div className="modal__content modal__content--wide">
+        <ModalPortal>
+          <div className="modal">
+            <div className="modal__content modal__content--wide">
             <div className="card__header">
               <div>
                 <p className="eyebrow">Receipt helper</p>
@@ -991,13 +1013,15 @@ const Dashboard = () => {
                 {itemizeReceipt.error && <p className="error">{(itemizeReceipt.error as Error).message}</p>}
               </>
             )}
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {newTxnBudget && (
-        <div className="modal">
-          <div className="modal__content">
+        <ModalPortal>
+          <div className="modal">
+            <div className="modal__content">
             <div className="card__header">
               <div>
                 <p className="eyebrow">New transaction</p>
@@ -1117,13 +1141,15 @@ const Dashboard = () => {
               </button>
               {createTransaction.error && <p className="error">{(createTransaction.error as Error).message}</p>}
             </form>
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {newBudgetOpen && (
-        <div className="modal">
-          <div className="modal__content">
+        <ModalPortal>
+          <div className="modal">
+            <div className="modal__content">
             <div className="card__header">
               <div>
                 <p className="eyebrow">New budget</p>
@@ -1152,13 +1178,15 @@ const Dashboard = () => {
               </button>
               {createBudget.error && <p className="error">{(createBudget.error as Error).message}</p>}
             </form>
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {settingsBudget && (
-        <div className="modal">
-          <div className="modal__content">
+        <ModalPortal>
+          <div className="modal">
+            <div className="modal__content">
             <div className="card__header">
               <div>
                 <p className="eyebrow">Settings</p>
@@ -1268,13 +1296,15 @@ const Dashboard = () => {
                 {updatePayroll.isPending ? 'Saving…' : 'Save'}
               </button>
             </div>
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
       {balanceWizardOpen && (
-        <div className="modal">
-          <div className="modal__content modal__content--wide">
+        <ModalPortal>
+          <div className="modal">
+            <div className="modal__content modal__content--wide">
             <div className="card__header">
               <div>
                 <p className="eyebrow">Month-end helper</p>
@@ -1428,8 +1458,9 @@ const Dashboard = () => {
               </div>
               {balanceBudgets.error && <p className="error">{(balanceBudgets.error as Error).message}</p>}
             </div>
+            </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </section>
   );
