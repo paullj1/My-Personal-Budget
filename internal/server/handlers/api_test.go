@@ -82,6 +82,13 @@ func (f *fakeStore) GetUserByEmail(ctx context.Context, email string) (store.Use
 	return store.User{}, store.ErrNotFound
 }
 
+func (f *fakeStore) GetUserByID(ctx context.Context, id int64) (store.User, error) {
+	if f.user != nil && f.user.ID == id {
+		return *f.user, nil
+	}
+	return store.User{}, store.ErrNotFound
+}
+
 func (f *fakeStore) GetOrCreateUser(ctx context.Context, email string) (store.User, error) {
 	if f.user != nil && strings.EqualFold(f.user.Email, email) {
 		return *f.user, nil
@@ -105,6 +112,13 @@ func (f *fakeStore) RemoveBudgetShare(ctx context.Context, budgetID int64, owner
 
 func (f *fakeStore) GetPasskeyByUser(ctx context.Context, userID int64) (store.Passkey, error) {
 	if f.passkey != nil && f.passkey.UserID == userID {
+		return *f.passkey, nil
+	}
+	return store.Passkey{}, store.ErrNotFound
+}
+
+func (f *fakeStore) GetPasskeyByCredentialID(ctx context.Context, credentialID string) (store.Passkey, error) {
+	if f.passkey != nil && f.passkey.CredentialID == credentialID {
 		return *f.passkey, nil
 	}
 	return store.Passkey{}, store.ErrNotFound

@@ -364,6 +364,20 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (User, error) 
 	return u, err
 }
 
+func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
+	const q = `
+		SELECT id, email, encrypted_password
+		FROM users
+		WHERE id = $1;
+	`
+	var u User
+	err := s.db.QueryRowContext(ctx, q, id).Scan(&u.ID, &u.Email, &u.EncryptedPassword)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	return u, err
+}
+
 func (s *Store) GetOrCreateUser(ctx context.Context, email string) (User, error) {
 	const q = `
 		INSERT INTO users (email, encrypted_password, created_at, updated_at)

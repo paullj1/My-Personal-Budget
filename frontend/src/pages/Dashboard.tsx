@@ -1066,14 +1066,6 @@ const Dashboard = () => {
               }}
             >
               <label>
-                Description
-                <input
-                  value={newTxn.description}
-                  onChange={(e) => setNewTxn((prev) => ({ ...prev, description: e.target.value }))}
-                  required
-                />
-              </label>
-              <label>
                 Amount
                 <input
                   type="number"
@@ -1083,6 +1075,14 @@ const Dashboard = () => {
                   value={newTxn.amount}
                   onFocus={selectOnFocus}
                   onChange={(e) => setNewTxn((prev) => ({ ...prev, amount: Number(e.target.value) }))}
+                  required
+                />
+              </label>
+              <label>
+                Description
+                <input
+                  value={newTxn.description}
+                  onChange={(e) => setNewTxn((prev) => ({ ...prev, description: e.target.value }))}
                   required
                 />
               </label>

@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 
@@ -8,19 +7,29 @@ import { bufferFromBase64Url, toBase64Url } from '../utils/bytes';
 
 const Login = () => {
   const navigate = useNavigate();
-  const [pkEmail, setPkEmail] = useState('');
 
   const passkeyLogin = useMutation({
     mutationFn: async () => {
       const begin = await request<{
-        challenge: string;
-        rpId: string;
-        allowCredentials: { id: string; type: string }[];
-        timeout: number;
+        session_id: string;
+        publicKey?: {
+          challenge: string;
+          rpId: string;
+          allowCredentials: { id: string; type: string }[];
+          timeout: number;
+        };
+        challenge?: string;
+        rpId?: string;
+        allowCredentials?: { id: string; type: string }[];
+        timeout?: number;
       }>('/api/v1/auth/passkeys/login/begin', {
-        method: 'POST',
-        body: { email: pkEmail }
+        method: 'POST'
       });
+
+      const sessionId = begin.session_id;
+      if (!sessionId) {
+        throw new Error('Login options missing session id.');
+      }
 
       const publicKeyOpts = (begin as any).publicKey ?? begin;
       if (!publicKeyOpts?.challenge) {
@@ -47,7 +56,7 @@ const Login = () => {
       const finish = await request<LoginResponse>('/api/v1/auth/passkeys/login/finish', {
         method: 'POST',
         body: {
-          email: pkEmail,
+          session_id: sessionId,
           id: assertion.id,
           rawId: toBase64Url(assertion.rawId),
           type: assertion.type,
@@ -76,22 +85,12 @@ const Login = () => {
 
       <form
         className="form"
+        autoComplete="off"
         onSubmit={(e) => {
           e.preventDefault();
           passkeyLogin.mutate();
         }}
       >
-        <label>
-          Email
-          <input
-            type="email"
-            placeholder="you@example.com"
-            autoComplete="email"
-            required
-            value={pkEmail}
-            onChange={(e) => setPkEmail(e.target.value)}
-          />
-        </label>
         <button type="submit" disabled={passkeyLogin.isPending}>
           {passkeyLogin.isPending ? 'Waiting for passkey…' : 'Use passkey'}
         </button>

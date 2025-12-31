@@ -42,11 +42,13 @@ type BudgetStore interface {
 	UpdateTransaction(ctx context.Context, budgetID, transactionID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
 	DeleteTransaction(ctx context.Context, budgetID, transactionID int64, userID *int64) error
 	GetUserByEmail(ctx context.Context, email string) (store.User, error)
+	GetUserByID(ctx context.Context, id int64) (store.User, error)
 	GetOrCreateUser(ctx context.Context, email string) (store.User, error)
 	ListBudgetShares(ctx context.Context, budgetID int64, userID *int64) ([]store.User, error)
 	AddBudgetShare(ctx context.Context, budgetID int64, ownerID *int64, email string) (store.User, error)
 	RemoveBudgetShare(ctx context.Context, budgetID int64, ownerID *int64, email string) error
 	GetPasskeyByUser(ctx context.Context, userID int64) (store.Passkey, error)
+	GetPasskeyByCredentialID(ctx context.Context, credentialID string) (store.Passkey, error)
 	CreatePasskey(ctx context.Context, userID int64, credentialID, publicKey string, signCount int, backupEligible, backupState bool) (store.Passkey, error)
 	UpdatePasskeySignCount(ctx context.Context, credentialID string, signCount int) error
 }
@@ -240,40 +242,20 @@ func (h *APIHandler) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	var req struct {
-		Email string `json:"email"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Email) == "" {
-		respondError(w, http.StatusBadRequest, "email required")
-		return
-	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	user, err := h.store.GetUserByEmail(r.Context(), req.Email)
-	if errors.Is(err, store.ErrNotFound) {
-		respondError(w, http.StatusNotFound, "user not found")
-		return
-	}
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to load user")
-		return
-	}
-	passkey, err := h.store.GetPasskeyByUser(r.Context(), user.ID)
-	if errors.Is(err, store.ErrNotFound) {
-		respondError(w, http.StatusNotFound, "no passkey registered")
-		return
-	}
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to load passkey")
-		return
-	}
-	waUser := webUserFrom(user, []store.Passkey{passkey})
-	opts, sessionData, err := h.webAuth.BeginLogin(waUser)
+	opts, sessionData, err := h.webAuth.BeginDiscoverableLogin()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to start login")
 		return
 	}
-	h.pass.SaveAuthSession(req.Email, *sessionData)
-	respondJSON(w, http.StatusOK, opts)
+	sessionID, err := h.pass.SaveAuthSessionByID(*sessionData)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to start login")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"session_id": sessionID,
+		"publicKey":  opts.Response,
+	})
 }
 
 func (h *APIHandler) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
@@ -294,62 +276,79 @@ func (h *APIHandler) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) 
 	r.Body = io.NopCloser(bytes.NewReader(body))
 
 	var req struct {
-		Email        string `json:"email"`
-		CredentialID string `json:"credential_id"`
-		ID           string `json:"id"`
-		RawID        string `json:"rawId"`
+		SessionID string `json:"session_id"`
 	}
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
-	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
-	req.CredentialID = strings.TrimSpace(req.CredentialID)
-	if req.CredentialID == "" {
-		req.CredentialID = strings.TrimSpace(req.RawID)
-	}
-	if req.CredentialID == "" {
-		req.CredentialID = strings.TrimSpace(req.ID)
-	}
-	if req.Email == "" || req.CredentialID == "" {
-		respondError(w, http.StatusBadRequest, "email and credential id required")
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	if req.SessionID == "" {
+		respondError(w, http.StatusBadRequest, "session id required")
 		return
 	}
-	user, err := h.store.GetUserByEmail(r.Context(), req.Email)
-	if errors.Is(err, store.ErrNotFound) {
-		respondError(w, http.StatusUnauthorized, "user not found")
+	sessionData, ok := h.pass.ConsumeAuthSessionByID(req.SessionID)
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "login session expired")
 		return
 	}
+
+	handler := func(rawID, userHandle []byte) (webauthn.User, error) {
+		if len(rawID) > 0 {
+			credentialID := base64.RawURLEncoding.EncodeToString(rawID)
+			passkey, err := h.store.GetPasskeyByCredentialID(r.Context(), credentialID)
+			if err == nil {
+				user, err := h.store.GetUserByID(r.Context(), passkey.UserID)
+				if err != nil {
+					return nil, err
+				}
+				return webUserFrom(user, []store.Passkey{passkey}), nil
+			}
+			if !errors.Is(err, store.ErrNotFound) {
+				return nil, err
+			}
+		}
+		if len(userHandle) > 0 {
+			userID, err := strconv.ParseInt(string(userHandle), 10, 64)
+			if err == nil {
+				user, err := h.store.GetUserByID(r.Context(), userID)
+				if err != nil {
+					return nil, err
+				}
+				passkey, err := h.store.GetPasskeyByUser(r.Context(), user.ID)
+				if err != nil {
+					return nil, err
+				}
+				return webUserFrom(user, []store.Passkey{passkey}), nil
+			}
+		}
+		return nil, store.ErrNotFound
+	}
+
+	_, cred, err := h.webAuth.FinishPasskeyLogin(handler, sessionData, r)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to load user")
+		// Log the underlying error for troubleshooting; response remains generic.
+		log.Printf("passkey finish failed: %v", err)
+		respondError(w, http.StatusUnauthorized, "authentication failed")
 		return
 	}
-	passkey, err := h.store.GetPasskeyByUser(r.Context(), user.ID)
+	credID := base64.RawURLEncoding.EncodeToString(cred.ID)
+	passkey, err := h.store.GetPasskeyByCredentialID(r.Context(), credID)
 	if errors.Is(err, store.ErrNotFound) {
-		respondError(w, http.StatusUnauthorized, "no passkey registered")
+		respondError(w, http.StatusUnauthorized, "credential not found")
 		return
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to load passkey")
 		return
 	}
-	sessionData, ok := h.pass.ConsumeAuthSession(req.Email)
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "login session expired")
+	user, err := h.store.GetUserByID(r.Context(), passkey.UserID)
+	if errors.Is(err, store.ErrNotFound) {
+		respondError(w, http.StatusUnauthorized, "user not found")
 		return
 	}
-
-	waUser := webUserFrom(user, []store.Passkey{passkey})
-	cred, err := h.webAuth.FinishLogin(waUser, sessionData, r)
 	if err != nil {
-		// Log the underlying error for troubleshooting; response remains generic.
-		log.Printf("passkey finish failed for %s: %v", req.Email, err)
-		respondError(w, http.StatusUnauthorized, "authentication failed")
-		return
-	}
-	credID := base64.RawURLEncoding.EncodeToString(cred.ID)
-	if credID != passkey.CredentialID {
-		respondError(w, http.StatusUnauthorized, "credential mismatch")
+		respondError(w, http.StatusInternalServerError, "failed to load user")
 		return
 	}
 	if err := h.store.UpdatePasskeySignCount(r.Context(), credID, int(cred.Authenticator.SignCount)); err != nil && !errors.Is(err, store.ErrNotFound) {

@@ -15,6 +15,7 @@ type ChallengeStore struct {
 	authChallenges map[string]string
 	regSessions    map[string]webauthn.SessionData
 	authSessions   map[string]webauthn.SessionData
+	authSessionsByID map[string]webauthn.SessionData
 }
 
 func NewChallengeStore() *ChallengeStore {
@@ -23,6 +24,7 @@ func NewChallengeStore() *ChallengeStore {
 		authChallenges: make(map[string]string),
 		regSessions:    make(map[string]webauthn.SessionData),
 		authSessions:   make(map[string]webauthn.SessionData),
+		authSessionsByID: make(map[string]webauthn.SessionData),
 	}
 }
 
@@ -98,6 +100,27 @@ func (s *ChallengeStore) ConsumeAuthSession(email string) (webauthn.SessionData,
 	data, ok := s.authSessions[email]
 	if ok {
 		delete(s.authSessions, email)
+	}
+	return data, ok
+}
+
+func (s *ChallengeStore) SaveAuthSessionByID(data webauthn.SessionData) (string, error) {
+	id, err := randomBase64(32)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.authSessionsByID[id] = data
+	return id, nil
+}
+
+func (s *ChallengeStore) ConsumeAuthSessionByID(id string) (webauthn.SessionData, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.authSessionsByID[id]
+	if ok {
+		delete(s.authSessionsByID, id)
 	}
 	return data, ok
 }
