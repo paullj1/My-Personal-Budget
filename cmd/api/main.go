@@ -25,6 +25,10 @@ func main() {
 	}
 	defer db.Close()
 
+	if err := database.ApplyMigrations(context.Background(), db, "db/schema.sql"); err != nil {
+		log.Fatalf("apply migrations: %v", err)
+	}
+
 	store := store.New(db)
 
 	bgCtx, cancel := context.WithCancel(context.Background())

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -19,15 +21,16 @@ func New(db *sql.DB) *Store {
 }
 
 type Budget struct {
-	ID           int64      `json:"id"`
-	Name         string     `json:"name"`
-	Payroll      float64    `json:"payroll"`
-	PayrollRunAt *time.Time `json:"payroll_run_at,omitempty"`
-	Credits      float64    `json:"credits"`
-	Debits       float64    `json:"debits"`
-	Balance      float64    `json:"balance"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID                 int64      `json:"id"`
+	Name               string     `json:"name"`
+	Payroll            float64    `json:"payroll"`
+	PayrollRunAt       *time.Time `json:"payroll_run_at,omitempty"`
+	AutoBalanceEnabled bool       `json:"auto_balance_enabled"`
+	Credits            float64    `json:"credits"`
+	Debits             float64    `json:"debits"`
+	Balance            float64    `json:"balance"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type Transaction struct {
@@ -39,6 +42,11 @@ type Transaction struct {
 	Amount      float64   `json:"amount"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type AutoBalanceSource struct {
+	SourceBudgetID int64 `json:"source_budget_id"`
+	Weight         int   `json:"weight"`
 }
 
 type User struct {
@@ -63,7 +71,7 @@ var ErrNotFound = errors.New("not found")
 
 func (s *Store) ListBudgets(ctx context.Context, userID *int64) ([]Budget, error) {
 	base := `
-		SELECT b.id, b.name, b.payroll, b.payroll_run_at, b.created_at, b.updated_at,
+		SELECT b.id, b.name, b.payroll, b.payroll_run_at, b.auto_balance_enabled, b.created_at, b.updated_at,
 			COALESCE(SUM(CASE WHEN t.credit THEN t.amount ELSE 0 END), 0) AS credits,
 			COALESCE(SUM(CASE WHEN t.credit THEN 0 ELSE t.amount END), 0) AS debits
 		FROM budgets b
@@ -87,7 +95,7 @@ func (s *Store) ListBudgets(ctx context.Context, userID *int64) ([]Budget, error
 	var budgets []Budget
 	for rows.Next() {
 		var b Budget
-		if err := rows.Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.CreatedAt, &b.UpdatedAt, &b.Credits, &b.Debits); err != nil {
+		if err := rows.Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.AutoBalanceEnabled, &b.CreatedAt, &b.UpdatedAt, &b.Credits, &b.Debits); err != nil {
 			return nil, err
 		}
 		b.Balance = b.Credits - b.Debits
@@ -98,7 +106,7 @@ func (s *Store) ListBudgets(ctx context.Context, userID *int64) ([]Budget, error
 
 func (s *Store) GetBudget(ctx context.Context, id int64, userID *int64) (Budget, error) {
 	query := `
-		SELECT b.id, b.name, b.payroll, b.payroll_run_at, b.created_at, b.updated_at,
+		SELECT b.id, b.name, b.payroll, b.payroll_run_at, b.auto_balance_enabled, b.created_at, b.updated_at,
 			COALESCE(SUM(CASE WHEN t.credit THEN t.amount ELSE 0 END), 0) AS credits,
 			COALESCE(SUM(CASE WHEN t.credit THEN 0 ELSE t.amount END), 0) AS debits
 		FROM budgets b
@@ -114,7 +122,7 @@ func (s *Store) GetBudget(ctx context.Context, id int64, userID *int64) (Budget,
 	query += "LEFT JOIN transacts t ON t.budget_id = b.id " + where + " GROUP BY b.id;"
 
 	var b Budget
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.CreatedAt, &b.UpdatedAt, &b.Credits, &b.Debits)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.AutoBalanceEnabled, &b.CreatedAt, &b.UpdatedAt, &b.Credits, &b.Debits)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Budget{}, ErrNotFound
 	}
@@ -127,9 +135,9 @@ func (s *Store) GetBudget(ctx context.Context, id int64, userID *int64) (Budget,
 
 func (s *Store) CreateBudget(ctx context.Context, userID *int64, name string, payroll float64) (Budget, error) {
 	const q = `
-		INSERT INTO budgets (name, payroll, payroll_run_at, created_at, updated_at)
-		VALUES ($1, $2, NULL, NOW(), NOW())
-		RETURNING id, name, payroll, payroll_run_at, created_at, updated_at;
+		INSERT INTO budgets (name, payroll, payroll_run_at, auto_balance_enabled, created_at, updated_at)
+		VALUES ($1, $2, NULL, FALSE, NOW(), NOW())
+		RETURNING id, name, payroll, payroll_run_at, auto_balance_enabled, created_at, updated_at;
 	`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -138,7 +146,7 @@ func (s *Store) CreateBudget(ctx context.Context, userID *int64, name string, pa
 	defer tx.Rollback()
 
 	var b Budget
-	if err := tx.QueryRowContext(ctx, q, name, payroll).Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.CreatedAt, &b.UpdatedAt); err != nil {
+	if err := tx.QueryRowContext(ctx, q, name, payroll).Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.AutoBalanceEnabled, &b.CreatedAt, &b.UpdatedAt); err != nil {
 		return Budget{}, err
 	}
 	if userID != nil {
@@ -161,10 +169,10 @@ func (s *Store) UpdateBudget(ctx context.Context, id int64, userID *int64, name 
 		UPDATE budgets
 		SET name = $1, payroll = $2, updated_at = NOW()
 		WHERE id = $3
-		RETURNING id, name, payroll, payroll_run_at, created_at, updated_at;
+		RETURNING id, name, payroll, payroll_run_at, auto_balance_enabled, created_at, updated_at;
 	`
 	var b Budget
-	err := s.db.QueryRowContext(ctx, q, name, payroll, id).Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.CreatedAt, &b.UpdatedAt)
+	err := s.db.QueryRowContext(ctx, q, name, payroll, id).Scan(&b.ID, &b.Name, &b.Payroll, &b.PayrollRunAt, &b.AutoBalanceEnabled, &b.CreatedAt, &b.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Budget{}, ErrNotFound
 	}
@@ -172,6 +180,100 @@ func (s *Store) UpdateBudget(ctx context.Context, id int64, userID *int64, name 
 		return Budget{}, err
 	}
 	return b, nil
+}
+
+func (s *Store) GetAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64) (bool, []AutoBalanceSource, error) {
+	if err := s.ensureBudgetAccess(ctx, budgetID, userID); err != nil {
+		return false, nil, err
+	}
+	var enabled bool
+	if err := s.db.QueryRowContext(ctx, `SELECT auto_balance_enabled FROM budgets WHERE id = $1`, budgetID).Scan(&enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil, ErrNotFound
+		}
+		return false, nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT source_budget_id, weight
+		FROM budget_auto_balance_sources
+		WHERE budget_id = $1
+		ORDER BY source_budget_id;
+	`, budgetID)
+	if err != nil {
+		return false, nil, err
+	}
+	defer rows.Close()
+	var sources []AutoBalanceSource
+	for rows.Next() {
+		var s AutoBalanceSource
+		if err := rows.Scan(&s.SourceBudgetID, &s.Weight); err != nil {
+			return false, nil, err
+		}
+		sources = append(sources, s)
+	}
+	if err := rows.Err(); err != nil {
+		return false, nil, err
+	}
+	return enabled, sources, nil
+}
+
+func (s *Store) UpdateAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64, enabled bool, sources []AutoBalanceSource) error {
+	if err := s.ensureBudgetAccess(ctx, budgetID, userID); err != nil {
+		return err
+	}
+
+	seen := make(map[int64]struct{}, len(sources))
+	for _, source := range sources {
+		if source.SourceBudgetID == budgetID {
+			return fmt.Errorf("source budget cannot match target")
+		}
+		if source.Weight < 0 || source.Weight > 100 {
+			return fmt.Errorf("weight must be between 0 and 100")
+		}
+		if _, ok := seen[source.SourceBudgetID]; ok {
+			return fmt.Errorf("duplicate source budget")
+		}
+		seen[source.SourceBudgetID] = struct{}{}
+		if err := s.ensureBudgetAccess(ctx, source.SourceBudgetID, userID); err != nil {
+			return err
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE budgets
+		SET auto_balance_enabled = $1, updated_at = NOW()
+		WHERE id = $2
+	`, enabled, budgetID)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return ErrNotFound
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM budget_auto_balance_sources WHERE budget_id = $1`, budgetID); err != nil {
+		return err
+	}
+
+	for _, source := range sources {
+		if source.Weight <= 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO budget_auto_balance_sources (budget_id, source_budget_id, weight)
+			VALUES ($1, $2, $3)
+		`, budgetID, source.SourceBudgetID, source.Weight); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) DeleteBudget(ctx context.Context, id int64, userID *int64) error {
@@ -553,7 +655,7 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, payroll
+		SELECT id, name, payroll, auto_balance_enabled
 		FROM budgets
 		WHERE payroll > 0
 			AND (payroll_run_at IS NULL OR payroll_run_at < $1)
@@ -565,14 +667,16 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 	defer rows.Close()
 
 	type payrollBudget struct {
-		id      int64
-		payroll float64
+		id                 int64
+		name               string
+		payroll            float64
+		autoBalanceEnabled bool
 	}
 	var pending []payrollBudget
 	created := 0
 	for rows.Next() {
 		var pb payrollBudget
-		if err := rows.Scan(&pb.id, &pb.payroll); err != nil {
+		if err := rows.Scan(&pb.id, &pb.name, &pb.payroll, &pb.autoBalanceEnabled); err != nil {
 			return 0, fmt.Errorf("scan budget: %w", err)
 		}
 		pending = append(pending, pb)
@@ -582,6 +686,11 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 	}
 
 	for _, pb := range pending {
+		if pb.autoBalanceEnabled {
+			if err := applyAutoBalanceTx(ctx, tx, pb.id, pb.name); err != nil {
+				return 0, fmt.Errorf("auto-balance budget %d: %w", pb.id, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO transacts (budget_id, user_id, description, credit, amount, created_at, updated_at)
 			VALUES ($1, NULL, $2, TRUE, $3, NOW(), NOW())
@@ -606,4 +715,127 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 
 func payrollDescription(now time.Time) string {
 	return fmt.Sprintf("Payroll %s", now.Format("January 2006"))
+}
+
+func applyAutoBalanceTx(ctx context.Context, tx *sql.Tx, budgetID int64, budgetName string) error {
+	var balance float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(CASE WHEN credit THEN amount ELSE -amount END), 0)
+		FROM transacts
+		WHERE budget_id = $1;
+	`, budgetID).Scan(&balance); err != nil {
+		return fmt.Errorf("select balance: %w", err)
+	}
+	if balance >= 0 {
+		return nil
+	}
+
+	deficitCents := int64(math.Round(math.Abs(balance) * 100))
+	if deficitCents <= 0 {
+		return nil
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_budget_id, weight
+		FROM budget_auto_balance_sources
+		WHERE budget_id = $1
+		ORDER BY source_budget_id;
+	`, budgetID)
+	if err != nil {
+		return fmt.Errorf("select sources: %w", err)
+	}
+	defer rows.Close()
+
+	var sources []AutoBalanceSource
+	for rows.Next() {
+		var source AutoBalanceSource
+		if err := rows.Scan(&source.SourceBudgetID, &source.Weight); err != nil {
+			return fmt.Errorf("scan source: %w", err)
+		}
+		sources = append(sources, source)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("sources err: %w", err)
+	}
+	if len(sources) == 0 {
+		return nil
+	}
+
+	allocations := allocateWeightedCents(deficitCents, sources)
+	var totalAllocated int64
+	description := fmt.Sprintf("Auto-balance for %s", budgetName)
+	for i, source := range sources {
+		if allocations[i] <= 0 {
+			continue
+		}
+		amount := float64(allocations[i]) / 100
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO transacts (budget_id, user_id, description, credit, amount, created_at, updated_at)
+			VALUES ($1, NULL, $2, FALSE, $3, NOW(), NOW())
+		`, source.SourceBudgetID, description, amount); err != nil {
+			return fmt.Errorf("insert source debit: %w", err)
+		}
+		totalAllocated += allocations[i]
+	}
+
+	if totalAllocated <= 0 {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO transacts (budget_id, user_id, description, credit, amount, created_at, updated_at)
+		VALUES ($1, NULL, $2, TRUE, $3, NOW(), NOW())
+	`, budgetID, description, float64(totalAllocated)/100); err != nil {
+		return fmt.Errorf("insert target credit: %w", err)
+	}
+	return nil
+}
+
+func allocateWeightedCents(totalCents int64, sources []AutoBalanceSource) []int64 {
+	allocations := make([]int64, len(sources))
+	if totalCents <= 0 {
+		return allocations
+	}
+	totalWeight := 0
+	for _, source := range sources {
+		if source.Weight > 0 {
+			totalWeight += source.Weight
+		}
+	}
+	if totalWeight <= 0 {
+		return allocations
+	}
+
+	type remainderItem struct {
+		idx       int
+		remainder float64
+	}
+
+	var allocated int64
+	remainders := make([]remainderItem, 0, len(sources))
+	for i, source := range sources {
+		if source.Weight <= 0 {
+			continue
+		}
+		exact := float64(totalCents) * float64(source.Weight) / float64(totalWeight)
+		base := int64(math.Floor(exact))
+		allocations[i] = base
+		allocated += base
+		remainders = append(remainders, remainderItem{idx: i, remainder: exact - float64(base)})
+	}
+
+	remaining := totalCents - allocated
+	sort.Slice(remainders, func(i, j int) bool {
+		return remainders[i].remainder > remainders[j].remainder
+	})
+	for remaining > 0 && len(remainders) > 0 {
+		for _, item := range remainders {
+			if remaining == 0 {
+				break
+			}
+			allocations[item.idx]++
+			remaining--
+		}
+	}
+	return allocations
 }

@@ -2,14 +2,15 @@
 FROM node:20-alpine AS frontend
 WORKDIR /app/frontend
 
-COPY frontend/package.json ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend ./
 RUN npm run build
 
 ### Backend build
-FROM golang:1.24-alpine AS backend
+FROM golang:1.22-alpine AS backend
 ENV GOFLAGS=-mod=mod
+ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,6 +23,7 @@ WORKDIR /app
 COPY --from=backend /bin/api /bin/api
 COPY --from=backend /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=frontend /app/frontend/dist /app/static
+COPY db/schema.sql /app/db/schema.sql
 
 ENV PORT=8080
 ENV STATIC_DIR=/app/static

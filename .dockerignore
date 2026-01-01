@@ -1,6 +1,9 @@
 .*.swp
 .env*
 .git*
+**/node_modules
+frontend/dist
+frontend/.vite
 Dockerfile
 Procfile
 README.md

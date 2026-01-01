@@ -36,6 +36,8 @@ type BudgetStore interface {
 	CreateBudget(ctx context.Context, userID *int64, name string, payroll float64) (store.Budget, error)
 	UpdateBudget(ctx context.Context, id int64, userID *int64, name string, payroll float64) (store.Budget, error)
 	DeleteBudget(ctx context.Context, id int64, userID *int64) error
+	GetAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64) (bool, []store.AutoBalanceSource, error)
+	UpdateAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64, enabled bool, sources []store.AutoBalanceSource) error
 	ListTransactions(ctx context.Context, budgetID int64, userID *int64, limit int) ([]store.Transaction, error)
 	ListTransactionsPaged(ctx context.Context, budgetID int64, userID *int64, limit, offset int, search string) ([]store.Transaction, error)
 	CreateTransaction(ctx context.Context, budgetID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
@@ -651,6 +653,18 @@ func (h *APIHandler) handleBudgetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "auto-balance" {
+		switch r.Method {
+		case http.MethodGet:
+			h.getAutoBalanceConfig(w, r, id, userID)
+		case http.MethodPut, http.MethodPatch:
+			h.updateAutoBalanceConfig(w, r, id, userID)
+		default:
+			methodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
+		}
+		return
+	}
+
 	respondError(w, http.StatusNotFound, "not found")
 }
 
@@ -709,6 +723,63 @@ func (h *APIHandler) deleteBudget(w http.ResponseWriter, r *http.Request, id int
 		return
 	}
 	respondJSON(w, http.StatusNoContent, nil)
+}
+
+func (h *APIHandler) getAutoBalanceConfig(w http.ResponseWriter, r *http.Request, id int64, userID *int64) {
+	enabled, sources, err := h.store.GetAutoBalanceConfig(r.Context(), id, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		respondError(w, http.StatusNotFound, "budget not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to load auto-balance config")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"enabled": enabled,
+		"sources": sources,
+	})
+}
+
+func (h *APIHandler) updateAutoBalanceConfig(w http.ResponseWriter, r *http.Request, id int64, userID *int64) {
+	var req struct {
+		Enabled bool                      `json:"enabled"`
+		Sources []store.AutoBalanceSource `json:"sources"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid JSON payload")
+		return
+	}
+	seen := make(map[int64]struct{}, len(req.Sources))
+	for _, source := range req.Sources {
+		if source.SourceBudgetID <= 0 {
+			respondError(w, http.StatusBadRequest, "source_budget_id must be provided")
+			return
+		}
+		if source.SourceBudgetID == id {
+			respondError(w, http.StatusBadRequest, "source budget cannot match target")
+			return
+		}
+		if source.Weight < 0 || source.Weight > 100 {
+			respondError(w, http.StatusBadRequest, "weight must be between 0 and 100")
+			return
+		}
+		if _, ok := seen[source.SourceBudgetID]; ok {
+			respondError(w, http.StatusBadRequest, "duplicate source budget")
+			return
+		}
+		seen[source.SourceBudgetID] = struct{}{}
+	}
+
+	if err := h.store.UpdateAutoBalanceConfig(r.Context(), id, userID, req.Enabled, req.Sources); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			respondError(w, http.StatusNotFound, "budget not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to update auto-balance config")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (h *APIHandler) listTransactions(w http.ResponseWriter, r *http.Request, budgetID int64, userID *int64) {

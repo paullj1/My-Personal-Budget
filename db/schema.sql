@@ -34,7 +34,15 @@ CREATE TABLE IF NOT EXISTS budgets (
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
   payroll DOUBLE PRECISION DEFAULT 0,
-  payroll_run_at TIMESTAMP
+  payroll_run_at TIMESTAMP,
+  auto_balance_enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS budget_auto_balance_sources (
+  budget_id INTEGER REFERENCES budgets(id) ON DELETE CASCADE,
+  source_budget_id INTEGER REFERENCES budgets(id) ON DELETE CASCADE,
+  weight INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (budget_id, source_budget_id)
 );
 
 CREATE TABLE IF NOT EXISTS transacts (

@@ -55,6 +55,14 @@ func (f *fakeStore) DeleteBudget(ctx context.Context, id int64, userID *int64) e
 	return store.ErrNotFound
 }
 
+func (f *fakeStore) GetAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64) (bool, []store.AutoBalanceSource, error) {
+	return false, nil, nil
+}
+
+func (f *fakeStore) UpdateAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64, enabled bool, sources []store.AutoBalanceSource) error {
+	return nil
+}
+
 func (f *fakeStore) ListTransactions(ctx context.Context, budgetID int64, userID *int64, limit int) ([]store.Transaction, error) {
 	return nil, nil
 }
