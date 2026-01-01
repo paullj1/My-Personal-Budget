@@ -19,8 +19,14 @@ import (
 type fakeStore struct {
 	budgets       []store.Budget
 	createdBudget *store.Budget
+	updatedBudget *store.Budget
+	deletedBudget *int64
 	user          *store.User
 	passkey       *store.Passkey
+	shares        []store.User
+	sharesErr     error
+	addShareErr   error
+	removeErr     error
 	payrollCount  int
 	payrollErr    error
 }
@@ -51,10 +57,25 @@ func (f *fakeStore) CreateBudget(ctx context.Context, userID *int64, name string
 }
 
 func (f *fakeStore) UpdateBudget(ctx context.Context, id int64, userID *int64, name string, payroll float64) (store.Budget, error) {
+	for i, b := range f.budgets {
+		if b.ID == id {
+			f.budgets[i].Name = name
+			f.budgets[i].Payroll = payroll
+			updated := f.budgets[i]
+			f.updatedBudget = &updated
+			return updated, nil
+		}
+	}
 	return store.Budget{}, store.ErrNotFound
 }
 
 func (f *fakeStore) DeleteBudget(ctx context.Context, id int64, userID *int64) error {
+	for _, b := range f.budgets {
+		if b.ID == id {
+			f.deletedBudget = &id
+			return nil
+		}
+	}
 	return store.ErrNotFound
 }
 
@@ -118,14 +139,23 @@ func (f *fakeStore) GetOrCreateUser(ctx context.Context, email string) (store.Us
 }
 
 func (f *fakeStore) ListBudgetShares(ctx context.Context, budgetID int64, userID *int64) ([]store.User, error) {
-	return nil, nil
+	if f.sharesErr != nil {
+		return nil, f.sharesErr
+	}
+	return f.shares, nil
 }
 
 func (f *fakeStore) AddBudgetShare(ctx context.Context, budgetID int64, ownerID *int64, email string) (store.User, error) {
+	if f.addShareErr != nil {
+		return store.User{}, f.addShareErr
+	}
 	return store.User{ID: 2, Email: email}, nil
 }
 
 func (f *fakeStore) RemoveBudgetShare(ctx context.Context, budgetID int64, ownerID *int64, email string) error {
+	if f.removeErr != nil {
+		return f.removeErr
+	}
 	return nil
 }
 
@@ -206,6 +236,118 @@ func TestCreateBudget_ValidatesInput(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestCreateBudget_Succeeds(t *testing.T) {
+	fs := &fakeStore{}
+	handler, err := NewAPIHandler(config.Config{}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"name":"Groceries","payroll":250}`)
+	req := httptest.NewRequest(http.MethodPost, "/budgets", body)
+	w := httptest.NewRecorder()
+	handler.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+	if fs.createdBudget == nil || fs.createdBudget.Name != "Groceries" || fs.createdBudget.Payroll != 250 {
+		t.Fatalf("expected budget created, got %+v", fs.createdBudget)
+	}
+}
+
+func TestHandleBudgetByID_InvalidID(t *testing.T) {
+	fs := &fakeStore{}
+	handler, err := NewAPIHandler(config.Config{}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/budgets/not-a-number", nil)
+	w := httptest.NewRecorder()
+	handler.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetBudget_NotFound(t *testing.T) {
+	fs := &fakeStore{}
+	handler, err := NewAPIHandler(config.Config{}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/budgets/42", nil)
+	w := httptest.NewRecorder()
+	handler.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestUpdateBudget_Succeeds(t *testing.T) {
+	fs := &fakeStore{
+		budgets: []store.Budget{
+			{ID: 2, Name: "Rent", Payroll: 1000, CreatedAt: time.Now(), UpdatedAt: time.Now()},
+		},
+	}
+	handler, err := NewAPIHandler(config.Config{}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	body := bytes.NewBufferString(`{"name":"Rent Updated","payroll":1200}`)
+	req := httptest.NewRequest(http.MethodPut, "/budgets/2", body)
+	w := httptest.NewRecorder()
+	handler.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if fs.updatedBudget == nil || fs.updatedBudget.Name != "Rent Updated" || fs.updatedBudget.Payroll != 1200 {
+		t.Fatalf("expected updated budget, got %+v", fs.updatedBudget)
+	}
+}
+
+func TestSharesLifecycle(t *testing.T) {
+	fs := &fakeStore{
+		shares: []store.User{
+			{ID: 2, Email: "friend@example.com"},
+		},
+	}
+	handler, err := NewAPIHandler(config.Config{}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/budgets/1/shares", nil)
+	listW := httptest.NewRecorder()
+	handler.Router().ServeHTTP(listW, listReq)
+
+	if listW.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", listW.Code)
+	}
+
+	addReq := httptest.NewRequest(http.MethodPost, "/budgets/1/shares", bytes.NewBufferString(`{"email":"new@example.com"}`))
+	addW := httptest.NewRecorder()
+	handler.Router().ServeHTTP(addW, addReq)
+
+	if addW.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", addW.Code)
+	}
+
+	removeReq := httptest.NewRequest(http.MethodDelete, "/budgets/1/shares", bytes.NewBufferString(`{"email":"new@example.com"}`))
+	removeW := httptest.NewRecorder()
+	handler.Router().ServeHTTP(removeW, removeReq)
+
+	if removeW.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", removeW.Code)
 	}
 }
 
