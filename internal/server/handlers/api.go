@@ -38,6 +38,8 @@ type BudgetStore interface {
 	DeleteBudget(ctx context.Context, id int64, userID *int64) error
 	GetAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64) (bool, []store.AutoBalanceSource, error)
 	UpdateAutoBalanceConfig(ctx context.Context, budgetID int64, userID *int64, enabled bool, sources []store.AutoBalanceSource) error
+	RunMonthlyPayroll(ctx context.Context, now time.Time) (int, error)
+	RunBudgetPayroll(ctx context.Context, budgetID int64, userID *int64, now time.Time, force bool) (int, error)
 	ListTransactions(ctx context.Context, budgetID int64, userID *int64, limit int) ([]store.Transaction, error)
 	ListTransactionsPaged(ctx context.Context, budgetID int64, userID *int64, limit, offset int, search string) ([]store.Transaction, error)
 	CreateTransaction(ctx context.Context, budgetID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
@@ -73,6 +75,7 @@ func (h *APIHandler) Router() http.Handler {
 	mux.HandleFunc("/", h.index)
 	mux.HandleFunc("/budgets", h.handleBudgets)
 	mux.HandleFunc("/budgets/", h.handleBudgetByID)
+	mux.HandleFunc("/payroll/run", h.handlePayrollRun)
 	return mux
 }
 
@@ -103,6 +106,35 @@ func (h *APIHandler) index(w http.ResponseWriter, r *http.Request) {
 		"time":    time.Now().UTC(),
 	}
 	respondJSON(w, http.StatusOK, resp)
+}
+
+func (h *APIHandler) handlePayrollRun(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireUser(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	count, err := h.store.RunMonthlyPayroll(r.Context(), time.Now())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to run payroll")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"count": count})
+}
+
+func (h *APIHandler) runBudgetPayroll(w http.ResponseWriter, r *http.Request, id int64, userID *int64) {
+	count, err := h.store.RunBudgetPayroll(r.Context(), id, userID, time.Now(), true)
+	if errors.Is(err, store.ErrNotFound) {
+		respondError(w, http.StatusNotFound, "budget not found")
+		return
+	}
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to run payroll")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
 func (h *APIHandler) requireUser(w http.ResponseWriter, r *http.Request) (*int64, bool) {
@@ -665,6 +697,15 @@ func (h *APIHandler) handleBudgetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 3 && parts[1] == "payroll" && parts[2] == "run" {
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		h.runBudgetPayroll(w, r, id, userID)
+		return
+	}
+
 	respondError(w, http.StatusNotFound, "not found")
 }
 
@@ -734,6 +775,9 @@ func (h *APIHandler) getAutoBalanceConfig(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to load auto-balance config")
 		return
+	}
+	if sources == nil {
+		sources = []store.AutoBalanceSource{}
 	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"enabled": enabled,

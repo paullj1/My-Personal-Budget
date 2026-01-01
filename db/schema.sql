@@ -38,6 +38,9 @@ CREATE TABLE IF NOT EXISTS budgets (
   auto_balance_enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+ALTER TABLE budgets
+  ADD COLUMN IF NOT EXISTS auto_balance_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
 CREATE TABLE IF NOT EXISTS budget_auto_balance_sources (
   budget_id INTEGER REFERENCES budgets(id) ON DELETE CASCADE,
   source_budget_id INTEGER REFERENCES budgets(id) ON DELETE CASCADE,

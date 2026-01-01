@@ -126,7 +126,8 @@ const Dashboard = () => {
   const [editingBudgetName, setEditingBudgetName] = useState('');
   const [payrollEdit, setPayrollEdit] = useState<number | null>(null);
   const [autoBalanceEnabled, setAutoBalanceEnabled] = useState(false);
-  const [autoBalanceWeights, setAutoBalanceWeights] = useState<Record<number, number>>({});
+  const [autoBalanceSelections, setAutoBalanceSelections] = useState<Record<number, boolean>>({});
+  const [runPayrollResult, setRunPayrollResult] = useState<number | null>(null);
   const [balanceWizardOpen, setBalanceWizardOpen] = useState(false);
   const [selectedNegatives, setSelectedNegatives] = useState<number[]>([]);
   const [selectedPositives, setSelectedPositives] = useState<number[]>([]);
@@ -173,7 +174,8 @@ const Dashboard = () => {
       setEditingBudgetName('');
       setPayrollEdit(null);
       setAutoBalanceEnabled(false);
-      setAutoBalanceWeights({});
+      setAutoBalanceSelections({});
+      setRunPayrollResult(null);
       return;
     }
     const target = budgets.find((b) => b.id === settingsBudget);
@@ -185,16 +187,16 @@ const Dashboard = () => {
       return;
     }
     setAutoBalanceEnabled(autoBalanceQuery.data.enabled);
-    const weights: Record<number, number> = {};
-    autoBalanceQuery.data.sources.forEach((source) => {
-      weights[source.source_budget_id] = source.weight;
+    const selections: Record<number, boolean> = {};
+    (autoBalanceQuery.data.sources || []).forEach((source) => {
+      selections[source.source_budget_id] = source.weight > 0;
     });
-    setAutoBalanceWeights(weights);
+    setAutoBalanceSelections(selections);
   }, [settingsBudget, autoBalanceQuery.data]);
   useEffect(() => {
     if (!settingsBudget) return;
-    setAutoBalanceWeights((prev) => {
-      const next: Record<number, number> = {};
+    setAutoBalanceSelections((prev) => {
+      const next: Record<number, boolean> = {};
       budgets.forEach((budget) => {
         if (budget.id === settingsBudget) return;
         if (prev[budget.id] !== undefined) {
@@ -231,9 +233,9 @@ const Dashboard = () => {
     () => budgets.filter((b) => (settingsBudget ? b.id !== settingsBudget : true)),
     [budgets, settingsBudget]
   );
-  const autoBalanceTotalWeight = useMemo(
-    () => autoBalanceOptions.reduce((sum, b) => sum + (autoBalanceWeights[b.id] || 0), 0),
-    [autoBalanceOptions, autoBalanceWeights]
+  const autoBalanceSelectionCount = useMemo(
+    () => autoBalanceOptions.reduce((sum, b) => sum + (autoBalanceSelections[b.id] ? 1 : 0), 0),
+    [autoBalanceOptions, autoBalanceSelections]
   );
   const totalDeficit = useMemo(
     () =>
@@ -437,11 +439,11 @@ const Dashboard = () => {
       name: string;
       payroll: number;
       autoBalanceEnabled: boolean;
-      autoBalanceWeights: Record<number, number>;
+      autoBalanceSelections: Record<number, boolean>;
     }) => {
-      const sources = Object.entries(payload.autoBalanceWeights)
-        .map(([id, weight]) => ({ source_budget_id: Number(id), weight: Math.round(weight) }))
-        .filter((source) => source.weight > 0);
+      const sources = Object.entries(payload.autoBalanceSelections)
+        .filter(([, enabled]) => enabled)
+        .map(([id]) => ({ source_budget_id: Number(id), weight: 1 }));
       const budget = await request<Budget>(`/api/v1/budgets/${payload.budgetId}`, {
         method: 'PUT',
         body: { name: payload.name, payroll: payload.payroll }
@@ -467,6 +469,16 @@ const Dashboard = () => {
       queryClient.invalidateQueries({ queryKey: ['budgets'] });
       setExpanded(null);
       setSettingsBudget(null);
+    }
+  });
+
+  const runPayroll = useMutation({
+    mutationFn: (budgetId: number) =>
+      request<{ count: number }>(`/api/v1/budgets/${budgetId}/payroll/run`, { method: 'POST' }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['budgets'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      setRunPayrollResult(result.count);
     }
   });
 
@@ -1328,7 +1340,7 @@ const Dashboard = () => {
             <div style={{ marginTop: 16 }}>
               <p className="eyebrow">Auto-balance</p>
               {autoBalanceQuery.isLoading && <p>Loading…</p>}
-              {autoBalanceQuery.error && <p className="error">{(autoBalanceQuery.error as Error).message}</p>}
+                {autoBalanceQuery.error && <p className="error">{(autoBalanceQuery.error as Error).message}</p>}
               <label className={`toggle ${autoBalanceQuery.isLoading ? 'toggle--disabled' : ''}`}>
                 <div className="toggle__text">
                   <span className="toggle__label">Auto-balance before payroll</span>
@@ -1348,40 +1360,45 @@ const Dashboard = () => {
                   </span>
                 </span>
               </label>
-              <div className={`collapse ${autoBalanceEnabled ? 'collapse--open' : ''}`} style={{ marginTop: 12 }}>
+              <div
+                className={`collapse collapse--scroll ${autoBalanceEnabled ? 'collapse--open' : ''}`}
+                style={{ marginTop: 12 }}
+              >
                 {autoBalanceOptions.length === 0 ? (
                   <p className="muted">No other budgets available.</p>
                 ) : (
                   <>
-                    <div className="slider-list">
+                    <div className="auto-balance-list">
                       {autoBalanceOptions.map((budget) => (
-                        <div key={budget.id} className="slider-row">
-                          <div className="slider-row__text">
+                        <label key={budget.id} className="toggle">
+                          <div className="toggle__text">
                             <span className="toggle__label">{budget.name}</span>
                             <span className={`toggle__hint ${budget.balance < 0 ? 'negative' : ''}`}>
                               Balance {formatHeadingBalance(budget.balance)}
                             </span>
                           </div>
-                          <div className="slider-row__controls">
+                          <span className="toggle__control">
                             <input
-                              type="range"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={autoBalanceWeights[budget.id] ?? 0}
+                              type="checkbox"
+                              checked={autoBalanceSelections[budget.id] ?? false}
                               onChange={(e) =>
-                                setAutoBalanceWeights((prev) => ({
+                                setAutoBalanceSelections((prev) => ({
                                   ...prev,
-                                  [budget.id]: Number(e.target.value)
+                                  [budget.id]: e.target.checked
                                 }))
                               }
                             />
-                            <span className="slider-value">{autoBalanceWeights[budget.id] ?? 0}%</span>
-                          </div>
-                        </div>
+                            <span className="toggle__track">
+                              <span className="toggle__thumb" />
+                            </span>
+                          </span>
+                        </label>
                       ))}
                     </div>
-                    <p className="muted">Total weight {autoBalanceTotalWeight}</p>
+                    <p className="muted">
+                      Split evenly across {autoBalanceSelectionCount} budget
+                      {autoBalanceSelectionCount === 1 ? '' : 's'}.
+                    </p>
                   </>
                 )}
               </div>
@@ -1442,6 +1459,14 @@ const Dashboard = () => {
               </button>
               <button
                 type="button"
+                className="secondary"
+                onClick={() => settingsBudget && runPayroll.mutate(settingsBudget)}
+                disabled={runPayroll.isPending || !settingsBudget}
+              >
+                {runPayroll.isPending ? 'Running…' : 'Run payroll'}
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   const target = budgets.find((b) => b.id === settingsBudget);
                   if (!target || !editingBudgetName.trim()) return;
@@ -1450,7 +1475,7 @@ const Dashboard = () => {
                     name: editingBudgetName.trim(),
                     payroll: payrollEdit ?? target.payroll,
                     autoBalanceEnabled,
-                    autoBalanceWeights
+                    autoBalanceSelections
                   });
                 }}
                 disabled={updateBudgetSettings.isPending || autoBalanceQuery.isLoading || !editingBudgetName.trim()}
@@ -1459,6 +1484,10 @@ const Dashboard = () => {
               </button>
             </div>
             {updateBudgetSettings.error && <p className="error">{(updateBudgetSettings.error as Error).message}</p>}
+            {runPayroll.error && <p className="error">{(runPayroll.error as Error).message}</p>}
+            {runPayrollResult !== null && (
+              <p className="muted">Created {runPayrollResult} payroll transaction{runPayrollResult === 1 ? '' : 's'}.</p>
+            )}
             </div>
           </div>
         </ModalPortal>

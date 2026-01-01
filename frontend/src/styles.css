@@ -542,41 +542,13 @@ button:disabled {
   cursor: not-allowed;
 }
 
-.slider-list {
+.collapse--scroll {
+  overflow: auto;
+}
+
+.auto-balance-list {
   display: grid;
   gap: 8px;
-}
-
-.slider-row {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.slider-row__text {
-  display: grid;
-  gap: 4px;
-}
-
-.slider-row__controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.slider-row__controls input[type='range'] {
-  flex: 1;
-  accent-color: var(--accent);
-}
-
-.slider-value {
-  min-width: 44px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
 }
 
 .select--tall {

@@ -63,6 +63,14 @@ func (f *fakeStore) UpdateAutoBalanceConfig(ctx context.Context, budgetID int64,
 	return nil
 }
 
+func (f *fakeStore) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, error) {
+	return 0, nil
+}
+
+func (f *fakeStore) RunBudgetPayroll(ctx context.Context, budgetID int64, userID *int64, now time.Time, force bool) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeStore) ListTransactions(ctx context.Context, budgetID int64, userID *int64, limit int) ([]store.Transaction, error) {
 	return nil, nil
 }

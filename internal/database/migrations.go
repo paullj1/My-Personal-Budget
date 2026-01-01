@@ -39,12 +39,20 @@ func ApplyMigrations(ctx context.Context, db *sql.DB, path string) error {
 func sanitizeSchema(schema string) string {
 	lines := strings.Split(schema, "\n")
 	out := make([]string, 0, len(lines))
+	skipCreateBlock := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, `\`) {
 			continue
 		}
-		if strings.Contains(trimmed, "CREATE DATABASE") {
+		if strings.HasPrefix(trimmed, "SELECT 'CREATE DATABASE") {
+			skipCreateBlock = true
+			continue
+		}
+		if skipCreateBlock {
+			if strings.Contains(trimmed, `\gexec`) {
+				skipCreateBlock = false
+			}
 			continue
 		}
 		out = append(out, line)

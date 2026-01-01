@@ -655,7 +655,7 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 	defer tx.Rollback()
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, name, payroll, auto_balance_enabled
+		SELECT id, name, payroll, auto_balance_enabled, payroll_run_at
 		FROM budgets
 		WHERE payroll > 0
 			AND (payroll_run_at IS NULL OR payroll_run_at < $1)
@@ -666,17 +666,11 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 	}
 	defer rows.Close()
 
-	type payrollBudget struct {
-		id                 int64
-		name               string
-		payroll            float64
-		autoBalanceEnabled bool
-	}
 	var pending []payrollBudget
 	created := 0
 	for rows.Next() {
 		var pb payrollBudget
-		if err := rows.Scan(&pb.id, &pb.name, &pb.payroll, &pb.autoBalanceEnabled); err != nil {
+		if err := rows.Scan(&pb.id, &pb.name, &pb.payroll, &pb.autoBalanceEnabled, &pb.payrollRunAt); err != nil {
 			return 0, fmt.Errorf("scan budget: %w", err)
 		}
 		pending = append(pending, pb)
@@ -686,23 +680,8 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 	}
 
 	for _, pb := range pending {
-		if pb.autoBalanceEnabled {
-			if err := applyAutoBalanceTx(ctx, tx, pb.id, pb.name); err != nil {
-				return 0, fmt.Errorf("auto-balance budget %d: %w", pb.id, err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO transacts (budget_id, user_id, description, credit, amount, created_at, updated_at)
-			VALUES ($1, NULL, $2, TRUE, $3, NOW(), NOW())
-		`, pb.id, payrollDescription(now), pb.payroll); err != nil {
-			return 0, fmt.Errorf("insert payroll txn: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE budgets
-			SET payroll_run_at = NOW(), updated_at = NOW()
-			WHERE id = $1
-		`, pb.id); err != nil {
-			return 0, fmt.Errorf("update payroll_run_at: %w", err)
+		if err := runPayrollForBudgetTx(ctx, tx, pb, now, monthStart, false); err != nil {
+			return 0, err
 		}
 		created++
 	}
@@ -715,6 +694,90 @@ func (s *Store) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, erro
 
 func payrollDescription(now time.Time) string {
 	return fmt.Sprintf("Payroll %s", now.Format("January 2006"))
+}
+
+func (s *Store) RunBudgetPayroll(ctx context.Context, budgetID int64, userID *int64, now time.Time, force bool) (int, error) {
+	if err := s.ensureBudgetAccess(ctx, budgetID, userID); err != nil {
+		return 0, err
+	}
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var pb payrollBudget
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id, name, payroll, auto_balance_enabled, payroll_run_at
+		FROM budgets
+		WHERE id = $1
+		FOR UPDATE;
+	`, budgetID).Scan(&pb.id, &pb.name, &pb.payroll, &pb.autoBalanceEnabled, &pb.payrollRunAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, fmt.Errorf("select budget: %w", err)
+	}
+	if pb.payroll <= 0 {
+		return 0, nil
+	}
+	if !force && pb.payrollRunAt != nil && !pb.payrollRunAt.Before(monthStart) {
+		return 0, nil
+	}
+
+	if err := runPayrollForBudgetTx(ctx, tx, pb, now, monthStart, force); err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit: %w", err)
+	}
+	return 1, nil
+}
+
+type payrollBudget struct {
+	id                 int64
+	name               string
+	payroll            float64
+	autoBalanceEnabled bool
+	payrollRunAt       *time.Time
+}
+
+func runPayrollForBudgetTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	pb payrollBudget,
+	now time.Time,
+	monthStart time.Time,
+	force bool,
+) error {
+	if pb.payroll <= 0 {
+		return nil
+	}
+	if !force && pb.payrollRunAt != nil && !pb.payrollRunAt.Before(monthStart) {
+		return nil
+	}
+	if pb.autoBalanceEnabled {
+		if err := applyAutoBalanceTx(ctx, tx, pb.id, pb.name); err != nil {
+			return fmt.Errorf("auto-balance budget %d: %w", pb.id, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO transacts (budget_id, user_id, description, credit, amount, created_at, updated_at)
+		VALUES ($1, NULL, $2, TRUE, $3, NOW(), NOW())
+	`, pb.id, payrollDescription(now), pb.payroll); err != nil {
+		return fmt.Errorf("insert payroll txn: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE budgets
+		SET payroll_run_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`, pb.id); err != nil {
+		return fmt.Errorf("update payroll_run_at: %w", err)
+	}
+	return nil
 }
 
 func applyAutoBalanceTx(ctx context.Context, tx *sql.Tx, budgetID int64, budgetName string) error {
