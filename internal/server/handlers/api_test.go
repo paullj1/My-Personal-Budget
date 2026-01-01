@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"my-personal-budget/internal/auth"
 	"my-personal-budget/internal/config"
 	"my-personal-budget/internal/passkey"
 	"my-personal-budget/internal/store"
@@ -20,6 +21,8 @@ type fakeStore struct {
 	createdBudget *store.Budget
 	user          *store.User
 	passkey       *store.Passkey
+	payrollCount  int
+	payrollErr    error
 }
 
 func (f *fakeStore) ListBudgets(ctx context.Context, userID *int64) ([]store.Budget, error) {
@@ -64,7 +67,7 @@ func (f *fakeStore) UpdateAutoBalanceConfig(ctx context.Context, budgetID int64,
 }
 
 func (f *fakeStore) RunMonthlyPayroll(ctx context.Context, now time.Time) (int, error) {
-	return 0, nil
+	return f.payrollCount, f.payrollErr
 }
 
 func (f *fakeStore) RunBudgetPayroll(ctx context.Context, budgetID int64, userID *int64, now time.Time, force bool) (int, error) {
@@ -203,5 +206,45 @@ func TestCreateBudget_ValidatesInput(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestHandlePayrollRun_RequiresAuth(t *testing.T) {
+	fs := &fakeStore{}
+	handler, err := NewAPIHandler(config.Config{JWTSecret: "secret"}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/payroll/run", nil)
+	w := httptest.NewRecorder()
+	handler.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestHandlePayrollRun_SucceedsForUser(t *testing.T) {
+	fs := &fakeStore{payrollCount: 3}
+	handler, err := NewAPIHandler(config.Config{JWTSecret: "secret"}, fs, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/payroll/run", nil)
+	req = req.WithContext(auth.WithUserID(req.Context(), 7))
+	w := httptest.NewRecorder()
+	handler.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["count"] != float64(3) {
+		t.Fatalf("expected count 3, got %v", resp["count"])
 	}
 }
