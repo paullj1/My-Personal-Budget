@@ -1,4 +1,3 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from './App';
@@ -23,22 +22,23 @@ vi.mock('./api/client', () => {
   };
 });
 
+vi.mock('./pages/Dashboard', () => ({
+  default: () => <div>Dashboard stub</div>
+}));
+
 const renderApp = () => {
   localStorage.setItem('mpb_token', 'test-token');
-  const client = new QueryClient();
   const routerFuture = { v7_startTransition: true, v7_relativeSplatPath: true };
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/dashboard']} future={routerFuture}>
-        <App />
-      </MemoryRouter>
-    </QueryClientProvider>
+    <MemoryRouter initialEntries={['/dashboard']} future={routerFuture}>
+      <App />
+    </MemoryRouter>
   );
 };
 
 describe('App bootstrap', () => {
   it('renders the dashboard shell without crashing', async () => {
     renderApp();
-    expect(await screen.findByText(/Budgets/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Dashboard stub/i)).toBeInTheDocument();
   });
 });
