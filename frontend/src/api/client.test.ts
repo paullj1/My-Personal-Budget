@@ -35,6 +35,7 @@ describe('api client', () => {
     persistToken('token-abc');
     const unauthorizedSpy = vi.fn();
     window.addEventListener('mpb-unauthorized', unauthorizedSpy);
+    window.history.pushState({}, '', '/login');
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
