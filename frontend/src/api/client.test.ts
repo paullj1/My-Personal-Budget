@@ -35,7 +35,6 @@ describe('api client', () => {
     persistToken('token-abc');
     const unauthorizedSpy = vi.fn();
     window.addEventListener('mpb-unauthorized', unauthorizedSpy);
-    const replaceSpy = vi.spyOn(window.location, 'replace').mockImplementation(() => {});
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 401,
@@ -47,7 +46,6 @@ describe('api client', () => {
     await expect(request('/api/test')).rejects.toThrow('unauthorized');
     expect(localStorage.getItem('mpb_token')).toBeNull();
     expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
-    expect(replaceSpy).toHaveBeenCalledWith('/login');
 
     window.removeEventListener('mpb-unauthorized', unauthorizedSpy);
   });

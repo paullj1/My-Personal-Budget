@@ -9,6 +9,7 @@ vi.mock('./api/client', () => {
   return {
     apiBase: '',
     clearToken: vi.fn(),
+    hasAuthToken: vi.fn(() => true),
     persistToken: vi.fn(),
     request: vi.fn((path: string) => {
       if (path.includes('/budgets') && path.includes('/transactions')) {
