@@ -465,10 +465,32 @@ const Dashboard = () => {
 
   const deleteBudget = useMutation({
     mutationFn: (budgetId: number) => request(`/api/v1/budgets/${budgetId}`, { method: 'DELETE' }),
+    onMutate: async (budgetId) => {
+      await queryClient.cancelQueries({ queryKey: ['budgets'] });
+      const previous = queryClient.getQueryData<BudgetsResponse>(['budgets']);
+      if (previous?.data) {
+        queryClient.setQueryData<BudgetsResponse>(['budgets'], {
+          ...previous,
+          data: previous.data.filter((budget) => budget.id !== budgetId),
+          meta: {
+            ...previous.meta,
+            count: Math.max(0, previous.meta.count - 1)
+          }
+        });
+      }
+      return { previous };
+    },
+    onError: (_error, _budgetId, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['budgets'], context.previous);
+      }
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['budgets'] });
       setExpanded(null);
       setSettingsBudget(null);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['budgets'] });
     }
   });
 
