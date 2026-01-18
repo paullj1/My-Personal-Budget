@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -65,6 +69,16 @@ type Passkey struct {
 	BackupState    bool      `json:"backup_state"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+type APIKey struct {
+	ID         int64      `json:"id"`
+	UserID     int64      `json:"user_id"`
+	Email      string     `json:"email"`
+	Name       string     `json:"name"`
+	Prefix     string     `json:"prefix"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 }
 
 var ErrNotFound = errors.New("not found")
@@ -281,7 +295,23 @@ func (s *Store) DeleteBudget(ctx context.Context, id int64, userID *int64) error
 		return err
 	}
 
-	res, err := s.db.ExecContext(ctx, `DELETE FROM budgets WHERE id = $1`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM transacts WHERE budget_id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM budget_auto_balance_sources WHERE budget_id = $1 OR source_budget_id = $1`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users_budgets WHERE budget_id = $1`, id); err != nil {
+		return err
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM budgets WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -289,7 +319,7 @@ func (s *Store) DeleteBudget(ctx context.Context, id int64, userID *int64) error
 	if count == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 func (s *Store) ListTransactions(ctx context.Context, budgetID int64, userID *int64, limit int) ([]Transaction, error) {
@@ -551,6 +581,85 @@ func (s *Store) RemoveBudgetShare(ctx context.Context, budgetID int64, ownerID *
 	return err
 }
 
+func (s *Store) ListAPIKeys(ctx context.Context, userID int64) ([]APIKey, error) {
+	const q = `
+		SELECT ak.id, ak.user_id, u.email, ak.name, ak.token_prefix, ak.created_at, ak.last_used_at
+		FROM api_keys ak
+		JOIN users u ON u.id = ak.user_id
+		WHERE ak.user_id = $1
+		ORDER BY ak.created_at DESC;
+	`
+	rows, err := s.db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []APIKey
+	for rows.Next() {
+		var key APIKey
+		if err := rows.Scan(&key.ID, &key.UserID, &key.Email, &key.Name, &key.Prefix, &key.CreatedAt, &key.LastUsedAt); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (s *Store) CreateAPIKey(ctx context.Context, userID int64, name string) (APIKey, string, error) {
+	token, prefix, hash, err := generateAPIKey()
+	if err != nil {
+		return APIKey{}, "", err
+	}
+	const q = `
+		INSERT INTO api_keys (user_id, name, token_hash, token_prefix, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		RETURNING id, created_at, last_used_at;
+	`
+	var key APIKey
+	key.UserID = userID
+	key.Name = name
+	key.Prefix = prefix
+	if err := s.db.QueryRowContext(ctx, q, userID, name, hash, prefix).Scan(&key.ID, &key.CreatedAt, &key.LastUsedAt); err != nil {
+		return APIKey{}, "", err
+	}
+	user, err := s.GetUserByID(ctx, userID)
+	if err == nil {
+		key.Email = user.Email
+	}
+	return key, token, nil
+}
+
+func (s *Store) DeleteAPIKey(ctx context.Context, userID, keyID int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id = $1 AND user_id = $2`, keyID, userID)
+	if err != nil {
+		return err
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) GetAPIKeyByToken(ctx context.Context, token string) (APIKey, error) {
+	hash := hashAPIKey(token)
+	const q = `
+		SELECT ak.id, ak.user_id, u.email, ak.name, ak.token_prefix, ak.created_at, ak.last_used_at
+		FROM api_keys ak
+		JOIN users u ON u.id = ak.user_id
+		WHERE ak.token_hash = $1;
+	`
+	var key APIKey
+	if err := s.db.QueryRowContext(ctx, q, hash).Scan(&key.ID, &key.UserID, &key.Email, &key.Name, &key.Prefix, &key.CreatedAt, &key.LastUsedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return APIKey{}, ErrNotFound
+		}
+		return APIKey{}, err
+	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE api_keys SET last_used_at = NOW() WHERE id = $1`, key.ID)
+	return key, nil
+}
+
 func (s *Store) GetPasskeyByUser(ctx context.Context, userID int64) (Passkey, error) {
 	const q = `
 		SELECT id, user_id, credential_id, public_key, sign_count, backup_eligible, backup_state, created_at, updated_at
@@ -603,6 +712,25 @@ func (s *Store) CreatePasskey(ctx context.Context, userID int64, credentialID, p
 		return Passkey{}, err
 	}
 	return p, nil
+}
+
+func generateAPIKey() (string, string, string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", "", "", err
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(raw)
+	token := "mpb_" + encoded
+	prefix := token
+	if len(encoded) >= 8 {
+		prefix = "mpb_" + encoded[:8]
+	}
+	return token, prefix, hashAPIKey(token), nil
+}
+
+func hashAPIKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Store) UpdatePasskeySignCount(ctx context.Context, credentialID string, signCount int) error {

@@ -28,6 +28,17 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS index_users_on_email ON users (email);
 
+CREATE TABLE IF NOT EXISTS api_keys (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR NOT NULL DEFAULT '',
+  token_hash TEXT NOT NULL UNIQUE,
+  token_prefix VARCHAR NOT NULL DEFAULT '',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS index_api_keys_on_user_id ON api_keys (user_id);
+
 CREATE TABLE IF NOT EXISTS budgets (
   id SERIAL PRIMARY KEY,
   name VARCHAR,

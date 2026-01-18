@@ -3,6 +3,7 @@ import { Route, Routes, Navigate, useLocation, useNavigate } from 'react-router-
 
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
+import APIKeys from './pages/APIKeys';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { hasAuthToken } from './api/client';
@@ -39,6 +40,7 @@ const App = () => {
       <Routes>
         <Route path="/" element={<Navigate to={authed ? '/dashboard' : '/login'} replace />} />
         <Route path="/dashboard" element={requireAuth(<Dashboard />)} />
+        <Route path="/api-keys" element={requireAuth(<APIKeys />)} />
         <Route path="/login" element={authed ? <Navigate to="/dashboard" replace /> : <Login />} />
         <Route path="/register" element={authed ? <Navigate to="/dashboard" replace /> : <Register />} />
         <Route path="*" element={<div className="card">Not found</div>} />

@@ -45,6 +45,9 @@ type BudgetStore interface {
 	CreateTransaction(ctx context.Context, budgetID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
 	UpdateTransaction(ctx context.Context, budgetID, transactionID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
 	DeleteTransaction(ctx context.Context, budgetID, transactionID int64, userID *int64) error
+	ListAPIKeys(ctx context.Context, userID int64) ([]store.APIKey, error)
+	CreateAPIKey(ctx context.Context, userID int64, name string) (store.APIKey, string, error)
+	DeleteAPIKey(ctx context.Context, userID, keyID int64) error
 	GetUserByEmail(ctx context.Context, email string) (store.User, error)
 	GetUserByID(ctx context.Context, id int64) (store.User, error)
 	GetOrCreateUser(ctx context.Context, email string) (store.User, error)
@@ -75,6 +78,8 @@ func (h *APIHandler) Router() http.Handler {
 	mux.HandleFunc("/", h.index)
 	mux.HandleFunc("/budgets", h.handleBudgets)
 	mux.HandleFunc("/budgets/", h.handleBudgetByID)
+	mux.HandleFunc("/api-keys", h.handleAPIKeys)
+	mux.HandleFunc("/api-keys/", h.handleAPIKeyByID)
 	mux.HandleFunc("/payroll/run", h.handlePayrollRun)
 	return mux
 }
@@ -568,6 +573,45 @@ func (h *APIHandler) handleBudgets(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *APIHandler) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok || userID == nil {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		h.listAPIKeys(w, r, *userID)
+	case http.MethodPost:
+		h.createAPIKey(w, r, *userID)
+	default:
+		methodNotAllowed(w, http.MethodGet, http.MethodPost)
+	}
+}
+
+func (h *APIHandler) handleAPIKeyByID(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.requireUser(w, r)
+	if !ok || userID == nil {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/api-keys/")
+	if path == "" {
+		respondError(w, http.StatusNotFound, "not found")
+		return
+	}
+	id, err := strconv.ParseInt(path, 10, 64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid api key id")
+		return
+	}
+	if r.Method != http.MethodDelete {
+		methodNotAllowed(w, http.MethodDelete)
+		return
+	}
+	h.deleteAPIKey(w, r, *userID, id)
+}
+
 func (h *APIHandler) listBudgets(w http.ResponseWriter, r *http.Request) {
 	userID, _ := h.requireUser(w, r)
 	budgets, err := h.store.ListBudgets(r.Context(), userID)
@@ -608,6 +652,55 @@ func (h *APIHandler) createBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusCreated, budget)
+}
+
+func (h *APIHandler) listAPIKeys(w http.ResponseWriter, r *http.Request, userID int64) {
+	keys, err := h.store.ListAPIKeys(r.Context(), userID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list api keys")
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"data": keys,
+		"meta": map[string]any{"count": len(keys)},
+	})
+}
+
+func (h *APIHandler) createAPIKey(w http.ResponseWriter, r *http.Request, userID int64) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		respondError(w, http.StatusBadRequest, "invalid JSON payload")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	key, token, err := h.store.CreateAPIKey(r.Context(), userID, req.Name)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to create api key")
+		return
+	}
+	respondJSON(w, http.StatusCreated, map[string]any{
+		"id":           key.ID,
+		"user_id":      key.UserID,
+		"email":        key.Email,
+		"name":         key.Name,
+		"prefix":       key.Prefix,
+		"created_at":   key.CreatedAt,
+		"last_used_at": key.LastUsedAt,
+		"token":        token,
+	})
+}
+
+func (h *APIHandler) deleteAPIKey(w http.ResponseWriter, r *http.Request, userID, keyID int64) {
+	if err := h.store.DeleteAPIKey(r.Context(), userID, keyID); errors.Is(err, store.ErrNotFound) {
+		respondError(w, http.StatusNotFound, "api key not found")
+		return
+	} else if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to delete api key")
+		return
+	}
+	respondJSON(w, http.StatusNoContent, nil)
 }
 
 func (h *APIHandler) handleBudgetByID(w http.ResponseWriter, r *http.Request) {

@@ -23,6 +23,7 @@ type fakeStore struct {
 	deletedBudget *int64
 	user          *store.User
 	passkey       *store.Passkey
+	apiKeys       []store.APIKey
 	shares        []store.User
 	sharesErr     error
 	addShareErr   error
@@ -113,6 +114,26 @@ func (f *fakeStore) UpdateTransaction(ctx context.Context, budgetID, transaction
 
 func (f *fakeStore) DeleteTransaction(ctx context.Context, budgetID, transactionID int64, userID *int64) error {
 	return store.ErrNotFound
+}
+
+func (f *fakeStore) ListAPIKeys(ctx context.Context, userID int64) ([]store.APIKey, error) {
+	return f.apiKeys, nil
+}
+
+func (f *fakeStore) CreateAPIKey(ctx context.Context, userID int64, name string) (store.APIKey, string, error) {
+	key := store.APIKey{
+		ID:        int64(len(f.apiKeys) + 1),
+		UserID:    userID,
+		Name:      name,
+		Prefix:    "mpb_test",
+		CreatedAt: time.Now(),
+	}
+	f.apiKeys = append(f.apiKeys, key)
+	return key, "mpb_test_token", nil
+}
+
+func (f *fakeStore) DeleteAPIKey(ctx context.Context, userID, keyID int64) error {
+	return nil
 }
 
 func (f *fakeStore) GetUserByEmail(ctx context.Context, email string) (store.User, error) {

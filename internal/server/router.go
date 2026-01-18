@@ -28,6 +28,9 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 	mux.Handle("/api/v1/auth/passkeys/login/begin", api.PasskeyLoginBeginHandler())
 	mux.Handle("/api/v1/auth/passkeys/login/finish", api.PasskeyLoginFinishHandler())
 
+	mcp := handlers.NewMCPHandler(store)
+	mux.Handle("/mcp", middleware.APIKeyAuth(store, mcp))
+
 	protected := http.StripPrefix("/api/v1", api.Router())
 	if cfg.JWTSecret != "" {
 		protected = middleware.JWTAuth(cfg.JWTSecret, protected)

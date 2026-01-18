@@ -466,6 +466,8 @@ const Dashboard = () => {
   const deleteBudget = useMutation({
     mutationFn: (budgetId: number) => request(`/api/v1/budgets/${budgetId}`, { method: 'DELETE' }),
     onMutate: async (budgetId) => {
+      setExpanded(null);
+      setSettingsBudget(null);
       await queryClient.cancelQueries({ queryKey: ['budgets'] });
       const previous = queryClient.getQueryData<BudgetsResponse>(['budgets']);
       if (previous?.data) {
@@ -646,6 +648,8 @@ const Dashboard = () => {
     if (!target) return;
     const confirmed = window.confirm(`Delete budget "${target.name}"? This cannot be undone.`);
     if (confirmed) {
+      setExpanded(null);
+      setSettingsBudget(null);
       deleteBudget.mutate(target.id);
     }
   };

@@ -112,6 +112,14 @@ const Layout = ({ children }: PropsWithChildren) => {
             <span className="eyebrow">Actions</span>
             <div className="toolbar__buttons">
               {authed && (
+                <Link
+                  to="/api-keys"
+                  className={`ghost button-link ${location.pathname === '/api-keys' ? 'active' : ''}`}
+                >
+                  🔑 API keys
+                </Link>
+              )}
+              {authed && (
                 <button
                   type="button"
                   className="ghost"
