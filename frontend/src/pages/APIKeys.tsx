@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { request } from '../api/client';
@@ -32,6 +32,7 @@ const APIKeys = () => {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [newToken, setNewToken] = useState<CreateKeyResponse | null>(null);
+  const navigate = useNavigate();
 
   const keysQuery = useQuery({
     queryKey: ['api-keys'],
@@ -79,9 +80,9 @@ const APIKeys = () => {
           {ownerEmail && <p className="muted">Owner: {ownerEmail}</p>}
         </div>
         <div className="actions">
-          <Link to="/dashboard" className="ghost button-link">
+          <button type="button" className="ghost" onClick={() => navigate('/dashboard')}>
             ← Back to budgets
-          </Link>
+          </button>
         </div>
       </header>
 

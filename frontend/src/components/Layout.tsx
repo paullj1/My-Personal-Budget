@@ -112,12 +112,13 @@ const Layout = ({ children }: PropsWithChildren) => {
             <span className="eyebrow">Actions</span>
             <div className="toolbar__buttons">
               {authed && (
-                <Link
-                  to="/api-keys"
-                  className={`ghost button-link ${location.pathname === '/api-keys' ? 'active' : ''}`}
+                <button
+                  type="button"
+                  className={`ghost ${location.pathname === '/api-keys' ? 'active' : ''}`}
+                  onClick={() => navigate('/api-keys')}
                 >
                   🔑 API keys
-                </Link>
+                </button>
               )}
               {authed && (
                 <button

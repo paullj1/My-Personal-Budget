@@ -403,13 +403,6 @@ button:disabled {
   padding: 10px 12px;
 }
 
-.button-link {
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
 
 .icon {
   width: 48px;
