@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { persistToken, request } from '../api/client';
@@ -47,7 +48,15 @@ const Login = () => {
         timeout: publicKeyOpts.timeout
       };
 
-      const assertion = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
+      let assertion: PublicKeyCredential | null;
+      try {
+        assertion = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'NotAllowedError') {
+          throw new Error('Passkey login cancelled');
+        }
+        throw err;
+      }
       if (!assertion) {
         throw new Error('Passkey login cancelled');
       }
@@ -73,6 +82,17 @@ const Login = () => {
     }
   });
 
+  // Prompt for the passkey as soon as the page loads instead of waiting for a
+  // click. Guarded by a ref so StrictMode's double-invoked effects don't open
+  // two prompts.
+  const autoPrompted = useRef(false);
+  const { mutate: startLogin } = passkeyLogin;
+  useEffect(() => {
+    if (autoPrompted.current || !window.PublicKeyCredential) return;
+    autoPrompted.current = true;
+    startLogin();
+  }, [startLogin]);
+
   return (
     <section className="card">
       <header className="card__header">
@@ -81,7 +101,11 @@ const Login = () => {
           <h1>Login</h1>
         </div>
       </header>
-      <p className="muted">Use your passkey to get a JWT and access the app.</p>
+      <p className="muted">
+        {passkeyLogin.isPending
+          ? 'Follow your browser’s prompt to sign in with your passkey.'
+          : 'Use your passkey to get a JWT and access the app.'}
+      </p>
 
       <form
         className="form"
@@ -92,7 +116,7 @@ const Login = () => {
         }}
       >
         <button type="submit" disabled={passkeyLogin.isPending}>
-          {passkeyLogin.isPending ? 'Waiting for passkey…' : 'Use passkey'}
+          {passkeyLogin.isPending ? 'Waiting for passkey…' : passkeyLogin.isError ? 'Try again' : 'Use passkey'}
         </button>
         {passkeyLogin.error && <p className="error">{(passkeyLogin.error as Error).message}</p>}
       </form>
