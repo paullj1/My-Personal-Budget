@@ -105,3 +105,50 @@ CREATE TABLE IF NOT EXISTS passkeys (
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Receipts persist the parsed extraction, not the photo. Keeping the JSON gives
+-- an audit trail and the corpus for budget suggestions without the retention
+-- concerns of storing images. See docs/receipt-scan-design.md.
+CREATE TABLE IF NOT EXISTS receipts (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  merchant VARCHAR NOT NULL DEFAULT '',
+  purchased_at TIMESTAMP,
+  currency VARCHAR NOT NULL DEFAULT 'USD',
+  subtotal_cents INTEGER NOT NULL DEFAULT 0,
+  tax_cents INTEGER NOT NULL DEFAULT 0,
+  total_cents INTEGER NOT NULL DEFAULT 0,
+  tax_evidence VARCHAR NOT NULL DEFAULT 'unknown',
+  tax_basis VARCHAR NOT NULL DEFAULT '',
+  reconciled BOOLEAN NOT NULL DEFAULT TRUE,
+  parsed JSONB NOT NULL DEFAULT '{}'::jsonb,
+  model VARCHAR NOT NULL DEFAULT '',
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS index_receipts_on_user_id ON receipts (user_id);
+
+-- One row per receipt line. norm_key is the match key that drives budget
+-- suggestions; amounts are integer cents because tax proration must be exact.
+CREATE TABLE IF NOT EXISTS receipt_items (
+  id SERIAL PRIMARY KEY,
+  receipt_id INTEGER NOT NULL REFERENCES receipts(id) ON DELETE CASCADE,
+  budget_id INTEGER REFERENCES budgets(id) ON DELETE SET NULL,
+  transact_id INTEGER REFERENCES transacts(id) ON DELETE SET NULL,
+  line_text VARCHAR NOT NULL DEFAULT '',
+  norm_key VARCHAR NOT NULL DEFAULT '',
+  description VARCHAR NOT NULL DEFAULT '',
+  marker VARCHAR NOT NULL DEFAULT '',
+  amount_cents INTEGER NOT NULL DEFAULT 0,
+  tax_cents INTEGER NOT NULL DEFAULT 0,
+  adjust_cents INTEGER NOT NULL DEFAULT 0,
+  taxable BOOLEAN,
+  position INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS index_receipt_items_on_norm_key ON receipt_items (norm_key);
+CREATE INDEX IF NOT EXISTS index_receipt_items_on_receipt_id ON receipt_items (receipt_id);
+CREATE INDEX IF NOT EXISTS index_receipt_items_on_budget_id ON receipt_items (budget_id);
+
+-- Lets a transaction link back to the receipt that produced it.
+ALTER TABLE transacts
+  ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS index_transacts_on_receipt_id ON transacts (receipt_id);

@@ -30,6 +30,36 @@ type fakeStore struct {
 	removeErr     error
 	payrollCount  int
 	payrollErr    error
+
+	committedReceipt *store.ReceiptInput
+	commitResult     store.CommitReceiptResult
+	commitErr        error
+	suggestions      map[string]int64
+	suggestErr       error
+	receipt          *store.Receipt
+	receiptItems     []store.CommittedReceiptItem
+}
+
+func (f *fakeStore) CommitReceipt(ctx context.Context, userID *int64, in store.ReceiptInput) (store.CommitReceiptResult, error) {
+	f.committedReceipt = &in
+	if f.commitErr != nil {
+		return store.CommitReceiptResult{}, f.commitErr
+	}
+	return f.commitResult, nil
+}
+
+func (f *fakeStore) SuggestBudgets(ctx context.Context, userID *int64, keys []string) (map[string]int64, error) {
+	if f.suggestErr != nil {
+		return nil, f.suggestErr
+	}
+	return f.suggestions, nil
+}
+
+func (f *fakeStore) GetReceipt(ctx context.Context, id int64, userID *int64) (store.Receipt, []store.CommittedReceiptItem, error) {
+	if f.receipt == nil {
+		return store.Receipt{}, nil, store.ErrNotFound
+	}
+	return *f.receipt, f.receiptItems, nil
 }
 
 func (f *fakeStore) ListBudgets(ctx context.Context, userID *int64) ([]store.Budget, error) {

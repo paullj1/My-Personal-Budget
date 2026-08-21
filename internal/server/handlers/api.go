@@ -16,6 +16,7 @@ import (
 	"my-personal-budget/internal/auth"
 	"my-personal-budget/internal/config"
 	"my-personal-budget/internal/passkey"
+	"my-personal-budget/internal/receipt"
 	"my-personal-budget/internal/store"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -27,6 +28,9 @@ type APIHandler struct {
 	store   BudgetStore
 	pass    *passkey.ChallengeStore
 	webAuth *webauthn.WebAuthn
+	// extractor is nil when RECEIPT_OCR_URL is unset, which disables scanning
+	// and leaves manual itemizing untouched.
+	extractor receipt.Extractor
 }
 
 // BudgetStore abstracts data access for testability.
@@ -58,6 +62,9 @@ type BudgetStore interface {
 	GetPasskeyByCredentialID(ctx context.Context, credentialID string) (store.Passkey, error)
 	CreatePasskey(ctx context.Context, userID int64, credentialID, publicKey string, signCount int, backupEligible, backupState bool) (store.Passkey, error)
 	UpdatePasskeySignCount(ctx context.Context, credentialID string, signCount int) error
+	CommitReceipt(ctx context.Context, userID *int64, in store.ReceiptInput) (store.CommitReceiptResult, error)
+	SuggestBudgets(ctx context.Context, userID *int64, keys []string) (map[string]int64, error)
+	GetReceipt(ctx context.Context, id int64, userID *int64) (store.Receipt, []store.CommittedReceiptItem, error)
 }
 
 func NewAPIHandler(cfg config.Config, store BudgetStore, pass *passkey.ChallengeStore) (*APIHandler, error) {
@@ -69,7 +76,17 @@ func NewAPIHandler(cfg config.Config, store BudgetStore, pass *passkey.Challenge
 	if err != nil {
 		return nil, err
 	}
-	return &APIHandler{cfg: cfg, store: store, pass: pass, webAuth: w}, nil
+	h := &APIHandler{cfg: cfg, store: store, pass: pass, webAuth: w}
+	if cfg.ReceiptScanEnabled() {
+		h.extractor = receipt.NewOllamaExtractor(receipt.OllamaOptions{
+			BaseURL: cfg.ReceiptOCRURL,
+			Model:   cfg.ReceiptOCRModel,
+			Token:   cfg.ReceiptOCRToken,
+			NumCtx:  cfg.ReceiptOCRNumCtx,
+			Timeout: cfg.ReceiptOCRTimeout,
+		})
+	}
+	return h, nil
 }
 
 // Router returns a mux containing versioned API routes.
@@ -81,6 +98,8 @@ func (h *APIHandler) Router() http.Handler {
 	mux.HandleFunc("/api-keys", h.handleAPIKeys)
 	mux.HandleFunc("/api-keys/", h.handleAPIKeyByID)
 	mux.HandleFunc("/payroll/run", h.handlePayrollRun)
+	mux.HandleFunc("/receipts", h.handleReceipts)
+	mux.HandleFunc("/receipts/", h.handleReceiptByPath)
 	return mux
 }
 
@@ -109,6 +128,10 @@ func (h *APIHandler) index(w http.ResponseWriter, r *http.Request) {
 		"message": "Go API for My Personal Budget",
 		"version": "v1",
 		"time":    time.Now().UTC(),
+		// The UI reads this to decide whether to offer receipt scanning.
+		"features": map[string]any{
+			"receipt_scan": h.extractor != nil,
+		},
 	}
 	respondJSON(w, http.StatusOK, resp)
 }

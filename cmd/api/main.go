@@ -36,13 +36,35 @@ func main() {
 	payroll.StartScheduler(bgCtx, store, log.Default())
 
 	router := server.NewRouter(cfg, store)
-	srv := &http.Server{
-		Addr:         cfg.Host + ":" + cfg.Port,
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+
+	// A synchronous receipt scan legitimately runs for tens of seconds while the
+	// vision model reads the photo. With the default 10s write timeout the
+	// connection is torn down before the handler can answer, and the client sees
+	// an empty reply while the server logs a successful request. Scale the
+	// body timeouts off the configured inference timeout, and keep the header
+	// timeout short so slow-header protection is unaffected.
+	readTimeout, writeTimeout := 10*time.Second, 10*time.Second
+	if cfg.ReceiptScanEnabled() {
+		budget := cfg.ReceiptOCRTimeout + 30*time.Second
+		if budget > readTimeout {
+			readTimeout = budget
+		}
+		if budget > writeTimeout {
+			writeTimeout = budget
+		}
 	}
+
+	srv := &http.Server{
+		Addr:              cfg.Host + ":" + cfg.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       60 * time.Second,
+	}
+	log.Printf("HTTP timeouts: read=%s write=%s (receipt scanning %s)",
+		readTimeout, writeTimeout,
+		map[bool]string{true: "enabled", false: "disabled"}[cfg.ReceiptScanEnabled()])
 
 	log.Printf("Go API listening on %s", srv.Addr)
 

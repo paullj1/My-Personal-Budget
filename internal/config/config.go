@@ -20,6 +20,22 @@ type Config struct {
 	StaticDir         string
 	RelyingPartyID    string
 	RelyingPartyName  string
+
+	// Receipt scanning. ReceiptOCRURL empty disables the feature entirely: the
+	// scan endpoint returns 503 and the UI hides its button, leaving manual
+	// itemizing untouched.
+	ReceiptOCRURL     string
+	ReceiptOCRModel   string
+	ReceiptOCRToken   string
+	ReceiptOCRNumCtx  int
+	ReceiptOCRTimeout time.Duration
+	ReceiptMaxEdge    int
+	ReceiptMaxBytes   int64
+}
+
+// ReceiptScanEnabled reports whether an inference endpoint is configured.
+func (c Config) ReceiptScanEnabled() bool {
+	return c.ReceiptOCRURL != ""
 }
 
 // FromEnv reads configuration from environment variables with sensible defaults.
@@ -35,6 +51,19 @@ func FromEnv() Config {
 	dbInterval := envDuration("DB_CONNECT_INTERVAL_MS", 500*time.Millisecond)
 	rpID := envDefault("RELYING_PARTY_ID", "localhost")
 	rpName := envDefault("RELYING_PARTY_NAME", "My Personal Budget")
+	ocrURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("RECEIPT_OCR_URL")), "/")
+	ocrModel := envDefault("RECEIPT_OCR_MODEL", "qwen3.8:27b")
+	ocrToken := os.Getenv("RECEIPT_OCR_TOKEN")
+	// Ollama defaults to ~4096 and truncates silently, which looks like a bad
+	// model rather than a config error. Keep this well clear of the image tokens.
+	ocrNumCtx := envInt("RECEIPT_OCR_NUM_CTX", 32768)
+	ocrTimeout := envDuration("RECEIPT_OCR_TIMEOUT_MS", 120*time.Second)
+	// Bounds the long edge. A receipt usually fills only part of the frame, so a
+	// 1600px long edge leaves its print too small to read reliably; 2048 is the
+	// cheapest bound that still reads, since 2048 and native hit the same
+	// vision-token ceiling.
+	maxEdge := envInt("RECEIPT_MAX_EDGE", 2048)
+	maxBytes := int64(envInt("RECEIPT_MAX_IMAGE_BYTES", 16<<20))
 
 	return Config{
 		Host:              host,
@@ -48,6 +77,13 @@ func FromEnv() Config {
 		StaticDir:         staticDir,
 		RelyingPartyID:    rpID,
 		RelyingPartyName:  rpName,
+		ReceiptOCRURL:     ocrURL,
+		ReceiptOCRModel:   ocrModel,
+		ReceiptOCRToken:   ocrToken,
+		ReceiptOCRNumCtx:  ocrNumCtx,
+		ReceiptOCRTimeout: ocrTimeout,
+		ReceiptMaxEdge:    maxEdge,
+		ReceiptMaxBytes:   maxBytes,
 	}
 }
 
