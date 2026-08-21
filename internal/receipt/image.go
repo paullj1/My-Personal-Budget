@@ -28,6 +28,12 @@ const (
 	DefaultMaxEdge = 2048
 
 	jpegQuality = 85
+
+	// MaxPixels caps the decoded image. A byte-length limit is not enough: a
+	// heavily compressed PNG a few hundred KB in size can decode to hundreds of
+	// millions of pixels and exhaust memory. 60M covers any phone camera
+	// (a 48MP sensor is 48M) with room to spare.
+	MaxPixels = 60_000_000
 )
 
 // NormalizeInfo reports what was done, so callers can log or surface it.
@@ -52,6 +58,20 @@ func Normalize(data []byte, maxEdge int) ([]byte, NormalizeInfo, error) {
 	if maxEdge <= 0 {
 		maxEdge = DefaultMaxEdge
 	}
+	// Check the declared dimensions before decoding: DecodeConfig reads only the
+	// header, so an oversized image is rejected without allocating its pixels.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, NormalizeInfo{}, fmt.Errorf("decode image header: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return nil, NormalizeInfo{}, fmt.Errorf("image has no dimensions")
+	}
+	if pixels := int64(cfg.Width) * int64(cfg.Height); pixels > MaxPixels {
+		return nil, NormalizeInfo{}, fmt.Errorf("%w: %dx%d is %d megapixels, limit is %d",
+			ErrImageTooLarge, cfg.Width, cfg.Height, pixels/1_000_000, MaxPixels/1_000_000)
+	}
+
 	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, NormalizeInfo{}, fmt.Errorf("decode image: %w", err)
@@ -265,8 +285,8 @@ func downscale(src image.Image, maxEdge int) image.Image {
 	return dst
 }
 
-// ErrImageTooLarge is returned before decoding, so an oversized upload cannot
-// force a large allocation.
+// ErrImageTooLarge means the image's declared dimensions exceed MaxPixels. It is
+// reported from the header alone, before any pixels are allocated.
 var ErrImageTooLarge = errors.New("image too large")
 
 // extractRect crops, deskews and scales in a single resample.

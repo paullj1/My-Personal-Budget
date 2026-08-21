@@ -1,10 +1,34 @@
 package server
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"time"
 )
+
+// withRouteTimeouts bounds how long a handler may run, per route.
+//
+// The server-wide Read/WriteTimeout has to clear the slowest legitimate handler,
+// and a synchronous receipt scan runs for tens of seconds. Raising it alone would
+// hand every other route the same generous window. This restores a tight deadline
+// everywhere except the scan endpoint, enforced through the request context that
+// the inference client and database calls already honour.
+func withRouteTimeouts(next http.Handler, scanPath string, scanTimeout, defaultTimeout time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		budget := defaultTimeout
+		if scanTimeout > 0 && r.URL.Path == scanPath {
+			budget = scanTimeout
+		}
+		if budget <= 0 {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), budget)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
 
 func requestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

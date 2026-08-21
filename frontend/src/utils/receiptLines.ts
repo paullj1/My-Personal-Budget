@@ -51,13 +51,25 @@ export const lineTotalCents = (line: ItemizedLine) =>
 export const allocatedCents = (lines: ItemizedLine[]) =>
   lines.reduce((sum, line) => sum + lineTotalCents(line), 0);
 
-/** Receipts print dates; the date input wants yyyy-mm-dd in local time. */
+/**
+ * Formats a receipt date for a date input.
+ *
+ * The calendar date printed on a receipt is not an instant, so it must not be
+ * shifted by a timezone. The server sends it as midnight UTC, and reading that
+ * back with local getters moved it a day earlier anywhere west of UTC -- a
+ * receipt dated the 20th was committed as the 19th. Take the date part of the
+ * ISO string verbatim and only fall back to parsing for other formats, using UTC
+ * getters so the calendar date survives.
+ */
 export const toDateInput = (iso: string | null) => {
   if (!iso) return '';
-  const d = new Date(iso);
+  const trimmed = iso.trim();
+  const direct = /^(\d{4}-\d{2}-\d{2})/.exec(trimmed);
+  if (direct) return direct[1];
+  const d = new Date(trimmed);
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 };
 
 export type BuildCommitArgs = {

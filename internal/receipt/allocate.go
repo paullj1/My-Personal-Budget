@@ -111,7 +111,13 @@ func Allocate(ex Extraction) Allocation {
 			continue
 		}
 		idxs, basis := taxableSet(lines, itemsSum, ex.TaxEvidence, tl)
-		alloc.TaxBasis = basis
+		// With several tax lines the bases can differ, and keeping only the last
+		// one persists a description that misstates how the rest was allocated.
+		if alloc.TaxBasis == BasisNoTax || alloc.TaxBasis == basis {
+			alloc.TaxBasis = basis
+		} else {
+			alloc.TaxBasis = BasisMixed
+		}
 		weights := make([]int, len(idxs))
 		base := 0
 		for i, idx := range idxs {
@@ -198,11 +204,21 @@ func taxableSet(lines []Line, itemsSum int, evidence string, tl ExTaxLine) ([]in
 // entry: items must equal the printed subtotal, and subtotal plus tax plus
 // adjustments must equal the printed total.
 func reconcile(itemsSum int, a Allocation) Reconciliation {
+	// Plenty of receipts -- coffee, fuel, fast food -- print a TOTAL and no
+	// SUBTOTAL line. Treating a missing subtotal as zero made every one of them
+	// fail reconciliation and drop the user into manual entry for no reason, so
+	// fall back to the item sum and only compare against the subtotal when the
+	// receipt actually printed one.
+	effectiveSubtotal := a.SubtotalCents
+	if effectiveSubtotal == 0 && itemsSum != 0 {
+		effectiveSubtotal = itemsSum
+	}
+
 	r := Reconciliation{
 		ItemsSumCents: itemsSum,
 		SubtotalCents: a.SubtotalCents,
 		PrintedCents:  a.TotalCents,
-		ComputedCents: a.SubtotalCents + a.TaxCents + a.AdjustCents,
+		ComputedCents: effectiveSubtotal + a.TaxCents + a.AdjustCents,
 	}
 	r.ItemsDeltaCents = itemsSum - a.SubtotalCents
 	r.TotalDeltaCents = r.ComputedCents - r.PrintedCents
@@ -215,8 +231,8 @@ func reconcile(itemsSum int, a Allocation) Reconciliation {
 			problems = append(problems, fmt.Sprintf("items sum to %s but the subtotal reads %s",
 				money(itemsSum), money(a.SubtotalCents)))
 		}
-		if r.TotalDeltaCents != 0 {
-			problems = append(problems, fmt.Sprintf("subtotal plus tax comes to %s but the total reads %s",
+		if a.TotalCents != 0 && r.TotalDeltaCents != 0 {
+			problems = append(problems, fmt.Sprintf("items plus tax come to %s but the total reads %s",
 				money(r.ComputedCents), money(r.PrintedCents)))
 		}
 	}

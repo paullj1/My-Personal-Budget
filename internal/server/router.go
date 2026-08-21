@@ -3,6 +3,7 @@ package server
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"my-personal-budget/internal/config"
 	"my-personal-budget/internal/passkey"
@@ -10,6 +11,9 @@ import (
 	"my-personal-budget/internal/server/middleware"
 	"my-personal-budget/internal/store"
 )
+
+// defaultHandlerTimeout bounds every route other than receipt scanning.
+const defaultHandlerTimeout = 20 * time.Second
 
 // NewRouter wires HTTP routes and middleware.
 func NewRouter(cfg config.Config, store *store.Store) http.Handler {
@@ -42,7 +46,16 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 	// Serve frontend assets (SPA fallback).
 	mux.Handle("/", newSPAHandler(cfg.StaticDir))
 
-	handler := requestLogger(mux)
+	// Handler-level deadlines, so raising the server's write timeout for receipt
+	// scanning does not loosen every other route.
+	var handler http.Handler = mux
+	if cfg.ReceiptScanEnabled() {
+		handler = withRouteTimeouts(handler, "/api/v1/receipts/scan",
+			cfg.ReceiptOCRTimeout+15*time.Second, defaultHandlerTimeout)
+	} else {
+		handler = withRouteTimeouts(handler, "", 0, defaultHandlerTimeout)
+	}
+	handler = requestLogger(handler)
 	if len(cfg.AllowedOrigins) > 0 {
 		handler = withCORS(handler, cfg.AllowedOrigins)
 	}

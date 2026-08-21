@@ -692,8 +692,8 @@ const Dashboard = () => {
     const controller = new AbortController();
     scanAbort.current = controller;
     try {
-      // Rotating tall receipts to landscape is what makes extraction work at
-      // all; bounding the long edge keeps the round trip near its measured floor.
+      // Applies EXIF orientation and caps the upload size. The server does the
+      // document detection, crop and deskew that make extraction reliable.
       const normalized = await normalizeReceiptImage(file);
       const form = new FormData();
       form.append('image', normalized.blob, 'receipt.jpg');
@@ -717,8 +717,11 @@ const Dashboard = () => {
         suggested: item.suggested_budget_id !== null
       }));
 
-      if (scan.merchant) setReceiptDescription(scan.merchant);
-      if (scan.total_cents > 0) setReceiptTotal(fromCents(scan.total_cents));
+      // Assign unconditionally. Guarding on truthiness let a second scan in the
+      // same open wizard keep the previous receipt's merchant and total, and the
+      // difference was then committed to the catch-all budget.
+      setReceiptDescription(scan.merchant || '');
+      setReceiptTotal(scan.total_cents > 0 ? fromCents(scan.total_cents) : 0);
       setReceiptDate(toDateInput(scan.purchased_at));
       setItemizedLines(scanned.length ? scanned : [newLine()]);
       setScanMeta({

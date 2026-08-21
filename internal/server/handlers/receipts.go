@@ -109,6 +109,10 @@ func (h *APIHandler) scanReceipt(w http.ResponseWriter, r *http.Request) {
 	// Normalize server-side even though the browser already does: a direct API
 	// caller that skips it would silently lose half the items on a tall receipt.
 	normalized, info, err := receipt.Normalize(image, h.cfg.ReceiptMaxEdge)
+	if errors.Is(err, receipt.ErrImageTooLarge) {
+		respondError(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
 	if err != nil {
 		respondError(w, http.StatusUnsupportedMediaType, "could not read that image")
 		return
@@ -320,8 +324,16 @@ func readUploadedImage(r *http.Request, maxBytes int64) ([]byte, error) {
 		return nil, fmt.Errorf("image exceeds the %d byte limit", maxBytes)
 	}
 
+	// A chunked request declares ContentLength -1, so the check above passes and
+	// ParseMultipartForm would spool without bound to temp files. Cap the body
+	// itself, which holds regardless of how the length was declared.
+	r.Body = http.MaxBytesReader(nil, r.Body, maxBytes+1)
+
 	if strings.HasPrefix(contentType, "multipart/form-data") {
 		if err := r.ParseMultipartForm(maxBytes); err != nil {
+			if strings.Contains(err.Error(), "too large") {
+				return nil, fmt.Errorf("image exceeds the %d byte limit", maxBytes)
+			}
 			return nil, fmt.Errorf("could not read the uploaded image")
 		}
 		file, _, err := r.FormFile("image")
@@ -344,6 +356,9 @@ func readUploadedImage(r *http.Request, maxBytes int64) ([]byte, error) {
 
 	data, err := io.ReadAll(io.LimitReader(r.Body, maxBytes+1))
 	if err != nil {
+		if strings.Contains(err.Error(), "too large") {
+			return nil, fmt.Errorf("image exceeds the %d byte limit", maxBytes)
+		}
 		return nil, fmt.Errorf("could not read the request body")
 	}
 	if int64(len(data)) > maxBytes {

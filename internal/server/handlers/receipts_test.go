@@ -534,3 +534,66 @@ func TestIndexReportsScanCapability(t *testing.T) {
 		})
 	}
 }
+
+// A chunked request declares ContentLength -1, so the length check passes and
+// ParseMultipartForm would otherwise spool without bound to temp files.
+func TestScanReceiptBoundsChunkedUpload(t *testing.T) {
+	h := scanHandler(t, &fakeStore{}, &fakeExtractor{extraction: targetExtraction()})
+
+	ct, body := multipartImage(t, "image", pngBytes(1200, 1200))
+	// The limit must sit below the real body size, or the request is simply legal.
+	h.cfg.ReceiptMaxBytes = int64(body.Len() / 2)
+
+	req := withUser(httptest.NewRequest(http.MethodPost, "/receipts/scan", body), 1)
+	req.Header.Set("Content-Type", ct)
+	// Exactly what a streaming client looks like: no declared length, so the
+	// ContentLength check cannot catch it.
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 for an unbounded chunked upload (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestScanReceiptRejectsOversizedPixelDimensions(t *testing.T) {
+	h := scanHandler(t, &fakeStore{}, &fakeExtractor{extraction: targetExtraction()})
+
+	// Small on the wire, enormous when decoded.
+	huge := image.NewGray(image.Rect(0, 0, 20000, 20000))
+	var raw bytes.Buffer
+	if err := png.Encode(&raw, huge); err != nil {
+		t.Skipf("could not build the fixture: %v", err)
+	}
+	h.cfg.ReceiptMaxBytes = int64(raw.Len()) + 4096
+
+	ct, body := multipartImage(t, "image", raw.Bytes())
+	req := withUser(httptest.NewRequest(http.MethodPost, "/receipts/scan", body), 1)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413 for a decompression bomb (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// The same bound must not reject a legitimately sized upload.
+func TestScanReceiptAllowsChunkedUploadWithinLimit(t *testing.T) {
+	h := scanHandler(t, &fakeStore{}, &fakeExtractor{extraction: targetExtraction()})
+	ct, body := multipartImage(t, "image", pngBytes(600, 600))
+	h.cfg.ReceiptMaxBytes = int64(body.Len()) * 4
+
+	req := withUser(httptest.NewRequest(http.MethodPost, "/receipts/scan", body), 1)
+	req.Header.Set("Content-Type", ct)
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+}

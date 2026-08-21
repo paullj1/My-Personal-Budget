@@ -68,6 +68,8 @@ const (
 	BasisImpliedRate       = "rate_implied_base"
 	BasisAllItems          = "all_items_proration"
 	BasisNoTax             = "no_tax"
+	// BasisMixed means several tax lines were allocated on different evidence.
+	BasisMixed = "mixed"
 )
 
 // Line is one receipt item with its share of tax and discounts folded in.

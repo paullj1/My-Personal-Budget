@@ -3,6 +3,7 @@ package receipt
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -235,5 +236,40 @@ func TestExifTurnsAndNetRotation(t *testing.T) {
 	}
 	if got := rotateQuarterTurns(img, -1).Bounds(); got.Dx() != 2 || got.Dy() != 4 {
 		t.Errorf("-1 turns = %v, want a quarter turn", got)
+	}
+}
+
+// A byte-size limit does not bound memory: a highly compressible PNG of a few
+// hundred KB can declare hundreds of millions of pixels. The header check rejects
+// it before any pixels are allocated.
+func TestNormalizeRejectsDecompressionBomb(t *testing.T) {
+	// 20000x20000 = 400M pixels, well past MaxPixels, and it compresses tiny.
+	huge := image.NewGray(image.Rect(0, 0, 20000, 20000))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, huge); err != nil {
+		t.Skipf("could not build the fixture: %v", err)
+	}
+	t.Logf("fixture: %d bytes declaring %d megapixels", buf.Len(), 20000*20000/1_000_000)
+
+	_, _, err := Normalize(buf.Bytes(), DefaultMaxEdge)
+	if err == nil {
+		t.Fatal("expected an oversized image to be rejected")
+	}
+	if !errors.Is(err, ErrImageTooLarge) {
+		t.Errorf("error should wrap ErrImageTooLarge so the handler can answer 413: %v", err)
+	}
+}
+
+func TestNormalizeAcceptsPhoneSizedImages(t *testing.T) {
+	// A 48MP phone sensor must stay under the limit.
+	if int64(8000)*6000 > MaxPixels {
+		t.Errorf("MaxPixels %d rejects a 48MP phone photo", MaxPixels)
+	}
+	_, info, err := Normalize(pngOf(1200, 900), DefaultMaxEdge)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if info.Width == 0 {
+		t.Error("expected a normalized image")
 	}
 }

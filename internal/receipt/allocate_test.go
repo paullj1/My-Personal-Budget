@@ -350,3 +350,89 @@ func TestCents(t *testing.T) {
 		}
 	}
 }
+
+// Coffee, fuel and fast-food receipts routinely print a TOTAL and no SUBTOTAL.
+// Treating that as zero failed reconciliation on every one of them.
+func TestAllocateReceiptWithNoPrintedSubtotal(t *testing.T) {
+	ex := Extraction{
+		Items: []ExItem{
+			{Position: 1, Description: "LATTE", Amount: 4.50, Taxable: b(true)},
+			{Position: 2, Description: "SCONE", Amount: 3.25, Taxable: b(true)},
+		},
+		TaxLines:    []ExTaxLine{},
+		Subtotal:    nil,
+		Total:       f(7.75),
+		TaxEvidence: EvidenceUnknown,
+	}
+	got := Allocate(ex)
+	if !got.Reconciliation.OK {
+		t.Fatalf("expected reconciliation to pass without a printed subtotal: %+v", got.Reconciliation)
+	}
+	if got.Reconciliation.ComputedCents != 775 {
+		t.Errorf("computed = %d, want 775 from the item sum", got.Reconciliation.ComputedCents)
+	}
+}
+
+func TestAllocateNoSubtotalWithTax(t *testing.T) {
+	ex := Extraction{
+		Items:       []ExItem{{Position: 1, Description: "SANDWICH", Amount: 10.00, Taxable: b(true)}},
+		TaxLines:    []ExTaxLine{{Label: "TAX", Amount: 0.60}},
+		Total:       f(10.60),
+		TaxEvidence: EvidenceUnknown,
+	}
+	got := Allocate(ex)
+	if !got.Reconciliation.OK {
+		t.Fatalf("expected reconciliation to pass: %+v", got.Reconciliation)
+	}
+	if got.Lines[0].TotalCents != 1060 {
+		t.Errorf("line total = %d, want 1060", got.Lines[0].TotalCents)
+	}
+}
+
+// A genuinely inconsistent receipt must still be caught when no subtotal exists.
+func TestAllocateNoSubtotalStillCatchesMismatch(t *testing.T) {
+	ex := Extraction{
+		Items:       []ExItem{{Position: 1, Description: "THING", Amount: 5.00}},
+		Total:       f(9.99),
+		TaxEvidence: EvidenceUnknown,
+	}
+	if got := Allocate(ex); got.Reconciliation.OK {
+		t.Error("expected a mismatch between the item sum and the printed total")
+	}
+}
+
+// With several tax lines allocated on different evidence, recording only the last
+// basis would misdescribe how the rest was distributed.
+func TestAllocateMixedTaxBasis(t *testing.T) {
+	ex := Extraction{
+		Items: []ExItem{
+			{Position: 1, Description: "FOOD", Amount: 10.00, Taxable: b(true)},
+			{Position: 2, Description: "BOOZE", Amount: 20.00, Taxable: b(false)},
+		},
+		TaxLines: []ExTaxLine{
+			{Label: "STATE", Base: f(30.00), Amount: 1.80}, // matches every item
+			{Label: "LIQUOR", Amount: 2.00},                // no base, falls to markers
+		},
+		Subtotal:    f(30.00),
+		Total:       f(33.80),
+		TaxEvidence: EvidencePerLineFlags,
+	}
+	got := Allocate(ex)
+	if got.TaxBasis != BasisMixed {
+		t.Errorf("tax_basis = %q, want %q when the lines disagree", got.TaxBasis, BasisMixed)
+	}
+	sum := 0
+	for _, l := range got.Lines {
+		sum += l.TaxCents
+	}
+	if sum != 380 {
+		t.Errorf("allocated tax = %d, want exactly 380", sum)
+	}
+}
+
+// A single tax line must keep reporting its specific basis.
+func TestAllocateSingleTaxBasisIsNotMixed(t *testing.T) {
+	if got := Allocate(targetReceipt()); got.TaxBasis != BasisPrintedBaseAll {
+		t.Errorf("tax_basis = %q, want %q", got.TaxBasis, BasisPrintedBaseAll)
+	}
+}

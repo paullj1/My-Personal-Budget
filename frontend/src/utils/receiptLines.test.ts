@@ -195,13 +195,22 @@ describe('buildReceiptCommit', () => {
 });
 
 describe('toDateInput', () => {
-  it('formats an ISO timestamp for a date input', () => {
-    expect(toDateInput('2026-08-20T08:40:00Z')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  it('keeps the calendar date the receipt printed', () => {
+    // The date on a receipt is a calendar date, not an instant. Reading midnight
+    // UTC with local getters moved it a day earlier anywhere west of UTC, so a
+    // receipt dated the 20th was committed as the 19th.
+    expect(toDateInput('2026-08-20T00:00:00Z')).toBe('2026-08-20');
+    expect(toDateInput('2026-08-20T08:40:00Z')).toBe('2026-08-20');
+    expect(toDateInput('2026-01-01T00:00:00Z')).toBe('2026-01-01');
+    expect(toDateInput('2026-08-20')).toBe('2026-08-20');
+    // A far-eastern offset must not push it forward either.
+    expect(toDateInput('2026-08-20T23:59:00+14:00')).toBe('2026-08-20');
   });
 
   it('returns empty for missing or unparseable dates', () => {
     expect(toDateInput(null)).toBe('');
     expect(toDateInput('')).toBe('');
+    expect(toDateInput('   ')).toBe('');
     expect(toDateInput('not a date')).toBe('');
   });
 });

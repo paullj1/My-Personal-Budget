@@ -3,6 +3,7 @@ package receipt
 import (
 	"image"
 	"math"
+	"sort"
 )
 
 // Deterministic document detection.
@@ -314,13 +315,20 @@ func convexHull(pts []point) []point {
 	return append(lower[:len(lower)-1], upper[:len(upper)-1]...)
 }
 
+// sortPoints orders boundary points for the monotone chain.
+//
+// This must not be a quadratic sort. A textured surface -- blinds, a grille, a
+// railing -- can alias into one connected component with hundreds of thousands of
+// boundary points, and the shape guards only reject it *after* the hull is built.
+// An insertion sort here cost 7.5s of CPU per request on such an image, which is
+// trivially repeatable by any caller.
 func sortPoints(p []point) {
-	// Insertion sort is fine: a hull input is a few thousand boundary points.
-	for i := 1; i < len(p); i++ {
-		for j := i; j > 0 && (p[j].X < p[j-1].X || (p[j].X == p[j-1].X && p[j].Y < p[j-1].Y)); j-- {
-			p[j], p[j-1] = p[j-1], p[j]
+	sort.Slice(p, func(i, j int) bool {
+		if p[i].X != p[j].X {
+			return p[i].X < p[j].X
 		}
-	}
+		return p[i].Y < p[j].Y
+	})
 }
 
 // minAreaRect finds the smallest enclosing rectangle by rotating calipers: the
