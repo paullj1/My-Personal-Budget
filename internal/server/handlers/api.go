@@ -642,6 +642,12 @@ func (h *APIHandler) listBudgets(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to list budgets")
 		return
 	}
+	// An empty result must serialize as [] rather than null. A nil slice became
+	// JSON null, which clients then had to paper over -- and the dashboard's
+	// workaround allocated a new array per render, hanging on an empty account.
+	if budgets == nil {
+		budgets = []store.Budget{}
+	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"data": budgets,
 		"meta": map[string]any{"count": len(budgets)},
@@ -969,6 +975,9 @@ func (h *APIHandler) listTransactions(w http.ResponseWriter, r *http.Request, bu
 	}
 	nextOffset := offset + len(txns)
 	hasMore := len(txns) == limit
+	if txns == nil {
+		txns = []store.Transaction{}
+	}
 	respondJSON(w, http.StatusOK, map[string]any{
 		"data": txns,
 		"meta": map[string]any{

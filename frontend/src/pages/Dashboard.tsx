@@ -231,7 +231,11 @@ const Dashboard = () => {
     queryKey: ['auto-balance', settingsBudget],
     queryFn: () => request<AutoBalanceConfig>(`/api/v1/budgets/${settingsBudget}/auto-balance`)
   });
-  const budgets = budgetsQuery.data?.data || [];
+  // Memoized so the identity is stable across renders. Without this, an empty
+  // list -- which the API sends as `data: null` -- produced a fresh [] on every
+  // render, and the effects keyed on `budgets` re-ran forever. A user with no
+  // budgets yet hung the dashboard.
+  const budgets = useMemo(() => budgetsQuery.data?.data ?? [], [budgetsQuery.data]);
   useEffect(() => {
     if (!settingsBudget) {
       setEditingBudgetName('');
@@ -274,12 +278,14 @@ const Dashboard = () => {
       setCatchAllBudgetId(null);
       return;
     }
-    setItemizedLines((prev) =>
-      prev.map((line) => {
+    setItemizedLines((prev) => {
+      const next = prev.map((line) => {
         if (!line.budgetId) return line;
         return budgets.some((b) => b.id === line.budgetId) ? line : { ...line, budgetId: null };
-      })
-    );
+      });
+      // map() always allocates; only take the new array if a line really changed.
+      return next.some((line, idx) => line !== prev[idx]) ? next : prev;
+    });
     if (catchAllBudgetId && budgets.some((b) => b.id === catchAllBudgetId)) return;
     setCatchAllBudgetId(budgets[0].id);
   }, [budgets, catchAllBudgetId]);
@@ -352,8 +358,17 @@ const Dashboard = () => {
   const itemizeReady = receiptTotal > 0 && catchAllBudgetId !== null && activeItemLines.length > 0 && !overAllocated;
 
   useEffect(() => {
-    setSelectedNegatives((prev) => prev.filter((id) => budgets.some((b) => b.id === id && b.balance < 0)));
-    setSelectedPositives((prev) => prev.filter((id) => budgets.some((b) => b.id === id && b.balance > 0)));
+    // filter() always allocates, so returning it unconditionally changed state
+    // identity on every run and scheduled another render. Keep the previous array
+    // when nothing was actually dropped.
+    const keepUnchanged = (prev: number[], next: number[]) =>
+      next.length === prev.length ? prev : next;
+    setSelectedNegatives((prev) =>
+      keepUnchanged(prev, prev.filter((id) => budgets.some((b) => b.id === id && b.balance < 0)))
+    );
+    setSelectedPositives((prev) =>
+      keepUnchanged(prev, prev.filter((id) => budgets.some((b) => b.id === id && b.balance > 0)))
+    );
   }, [budgets]);
   const transferOptions = useMemo(() => budgets.filter((b) => b.id !== newTxnBudget), [budgets, newTxnBudget]);
   const transferDisabled = transferOptions.length === 0;
@@ -1085,8 +1100,11 @@ const Dashboard = () => {
                 <p className="eyebrow">Receipt helper</p>
                 <h2>Itemize receipt</h2>
                 <p className="muted">
-                  Scan a receipt to fill this in, or start with the total and assign the line items you know. Anything
-                  left over drops into a catch-all budget.
+                  {/* Do not advertise scanning when the server has no inference
+                      endpoint configured; there would be no button to press. */}
+                  {scanEnabled
+                    ? 'Scan a receipt to fill this in, or start with the total and assign the line items you know. Anything left over drops into a catch-all budget.'
+                    : 'Start with the receipt total and assign the line items you know. Anything left over drops into a catch-all budget.'}
                 </p>
               </div>
               <div className="actions" style={{ gap: 8, alignItems: 'center' }}>

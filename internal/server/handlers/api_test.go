@@ -441,3 +441,43 @@ func TestHandlePayrollRun_SucceedsForUser(t *testing.T) {
 		t.Fatalf("expected count 3, got %v", resp["count"])
 	}
 }
+
+// A list endpoint that returns JSON null forces every client to guard against it,
+// and the dashboard's guard allocated a new array per render, hanging an empty
+// account. Empty must serialize as [].
+func TestListEndpointsReturnEmptyArrayNotNull(t *testing.T) {
+	cfg := config.Config{RelyingPartyID: "localhost"}
+	h, err := NewAPIHandler(cfg, &fakeStore{}, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"budgets", "/budgets"},
+		{"transactions", "/budgets/1/transactions"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), `"data":null`) {
+				t.Errorf("response contains a null data list: %s", rec.Body.String())
+			}
+			var payload struct {
+				Data []json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if payload.Data == nil {
+				t.Errorf("data decoded as nil rather than an empty array: %s", rec.Body.String())
+			}
+		})
+	}
+}

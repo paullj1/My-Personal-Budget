@@ -29,7 +29,7 @@ item has a budget dropdown, and commit as transactions. Integrated into the exis
 | D11 | Transactions backdated to the printed receipt date | Spending lands in the period it happened |
 | D12 | Commit is one atomic DB transaction | Replaces today's non-atomic N-POST loop |
 | D13 | Suggestion history scoped to budgets the user can access | Shared budgets get shared learning, which is the point of the share table |
-| D14 | Feature disabled when `RECEIPT_OCR_URL` is empty | Existing deployments and tests unaffected; scan button simply hides |
+| D14 | Feature disabled when `RECEIPT_OCR_URL` is empty | The API reports `features.receipt_scan: false`, the scan endpoint answers 503, the server keeps its tight 10s timeouts, and the UI shows neither the button nor any copy mentioning scanning. The capability check fails closed, so an unreachable API hides it too. Manual itemizing is untouched |
 
 ## 2. Architecture
 
