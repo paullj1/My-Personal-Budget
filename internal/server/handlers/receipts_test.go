@@ -597,3 +597,21 @@ func TestScanReceiptAllowsChunkedUploadWithinLimit(t *testing.T) {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// The router grants ScanPath a longer handler deadline. If the constant and the
+// real route ever drift, scans silently fall back to the short default, so pin
+// them together: a request to ScanPath must reach the scan handler.
+func TestScanPathRoutesToTheScanHandler(t *testing.T) {
+	if ScanPath != "/receipts/scan" {
+		t.Errorf("ScanPath = %q; update internal/server/router.go if this moved", ScanPath)
+	}
+	// Scanning disabled: 503 proves the request reached the handler, where 404
+	// would mean the path never matched.
+	h := scanHandler(t, &fakeStore{}, nil)
+	req := withUser(httptest.NewRequest(http.MethodPost, ScanPath, nil), 1)
+	rec := httptest.NewRecorder()
+	h.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d at %s, want 503 from the scan handler", rec.Code, ScanPath)
+	}
+}

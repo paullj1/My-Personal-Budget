@@ -688,6 +688,16 @@ const Dashboard = () => {
     if (!file) return;
     setScanError(null);
     setScanMeta(null);
+    // Clear before the request, not after it succeeds. Assigning only on success
+    // left a failed or cancelled rescan showing the previous receipt's merchant,
+    // total, date and lines -- all still committable as if they were this
+    // receipt's. Starting from a clean slate means a failure shows an empty form
+    // and an error, which is recoverable; committing receipt A's total against
+    // receipt B's items is not.
+    setReceiptDescription('');
+    setReceiptTotal(0);
+    setReceiptDate('');
+    setItemizedLines([newLine()]);
     setScanning(true);
     const controller = new AbortController();
     scanAbort.current = controller;
@@ -717,9 +727,6 @@ const Dashboard = () => {
         suggested: item.suggested_budget_id !== null
       }));
 
-      // Assign unconditionally. Guarding on truthiness let a second scan in the
-      // same open wizard keep the previous receipt's merchant and total, and the
-      // difference was then committed to the catch-all budget.
       setReceiptDescription(scan.merchant || '');
       setReceiptTotal(scan.total_cents > 0 ? fromCents(scan.total_cents) : 0);
       setReceiptDate(toDateInput(scan.purchased_at));

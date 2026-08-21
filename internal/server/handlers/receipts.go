@@ -49,6 +49,11 @@ type scanItem struct {
 	SuggestionSource  string `json:"suggestion_source,omitempty"`
 }
 
+// ScanPath is the API-relative path of the scan endpoint. The router needs it to
+// grant that route a longer handler deadline, so it lives here next to the
+// handler rather than being spelled out again at the call site.
+const ScanPath = "/receipts/scan"
+
 // handleReceipts serves the collection routes.
 func (h *APIHandler) handleReceipts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -63,7 +68,7 @@ func (h *APIHandler) handleReceipts(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) handleReceiptByPath(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/receipts/")
 	switch {
-	case rest == "scan":
+	case rest == strings.TrimPrefix(ScanPath, "/receipts/"):
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return

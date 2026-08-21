@@ -436,3 +436,44 @@ func TestAllocateSingleTaxBasisIsNotMixed(t *testing.T) {
 		t.Errorf("tax_basis = %q, want %q", got.TaxBasis, BasisPrintedBaseAll)
 	}
 }
+
+// The printed total is the only thing tax can be checked against. Without it a
+// misread tax would prorate onto every line behind a "balanced" badge.
+func TestAllocateNoTotalCannotBeVerified(t *testing.T) {
+	ex := Extraction{
+		Items:       []ExItem{{Position: 1, Description: "THING", Amount: 10.00, Taxable: b(true)}},
+		TaxLines:    []ExTaxLine{{Label: "TAX", Amount: 46.50}}, // 4.65 misread
+		Subtotal:    f(10.00),
+		Total:       nil,
+		TaxEvidence: EvidenceUnknown,
+	}
+	got := Allocate(ex)
+	if got.Reconciliation.OK {
+		t.Error("a receipt with no readable total must not report as balanced")
+	}
+	if got.Reconciliation.Message == "" {
+		t.Error("expected a message explaining the total could not be verified")
+	}
+}
+
+// A no-subtotal receipt must not report a large item delta beside ok=true.
+func TestAllocateDeltasAreSelfConsistent(t *testing.T) {
+	ex := Extraction{
+		Items: []ExItem{
+			{Position: 1, Description: "LATTE", Amount: 4.50},
+			{Position: 2, Description: "SCONE", Amount: 3.25},
+		},
+		Total:       f(7.75),
+		TaxEvidence: EvidenceUnknown,
+	}
+	got := Allocate(ex)
+	if !got.Reconciliation.OK {
+		t.Fatalf("expected reconciliation to pass: %+v", got.Reconciliation)
+	}
+	if got.Reconciliation.ItemsDeltaCents != 0 {
+		t.Errorf("items_delta = %d, want 0 alongside ok=true", got.Reconciliation.ItemsDeltaCents)
+	}
+	if got.Reconciliation.TotalDeltaCents != 0 {
+		t.Errorf("total_delta = %d, want 0", got.Reconciliation.TotalDeltaCents)
+	}
+}

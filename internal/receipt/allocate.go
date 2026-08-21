@@ -220,18 +220,26 @@ func reconcile(itemsSum int, a Allocation) Reconciliation {
 		PrintedCents:  a.TotalCents,
 		ComputedCents: effectiveSubtotal + a.TaxCents + a.AdjustCents,
 	}
-	r.ItemsDeltaCents = itemsSum - a.SubtotalCents
+	// Compare against the subtotal actually used, or a receipt with no printed
+	// subtotal reports a large delta beside ok=true.
+	r.ItemsDeltaCents = itemsSum - effectiveSubtotal
 	r.TotalDeltaCents = r.ComputedCents - r.PrintedCents
 
 	var problems []string
-	if a.SubtotalCents == 0 && a.TotalCents == 0 {
+	switch {
+	case a.SubtotalCents == 0 && a.TotalCents == 0:
 		problems = append(problems, "receipt has no readable subtotal or total")
-	} else {
-		if a.SubtotalCents != 0 && r.ItemsDeltaCents != 0 {
+	case a.TotalCents == 0:
+		// The printed total is the only thing tax can be checked against. Passing
+		// without it would let a misread tax -- 46.50 for 4.65, say -- prorate onto
+		// every line under a "scanned and balanced" badge.
+		problems = append(problems, "no total was readable, so the tax could not be verified")
+	default:
+		if a.SubtotalCents != 0 && itemsSum != a.SubtotalCents {
 			problems = append(problems, fmt.Sprintf("items sum to %s but the subtotal reads %s",
 				money(itemsSum), money(a.SubtotalCents)))
 		}
-		if a.TotalCents != 0 && r.TotalDeltaCents != 0 {
+		if r.TotalDeltaCents != 0 {
 			problems = append(problems, fmt.Sprintf("items plus tax come to %s but the total reads %s",
 				money(r.ComputedCents), money(r.PrintedCents)))
 		}

@@ -65,7 +65,7 @@ if [ "$MODE" = "api" ]; then
   jq -r '"==> image: \(.image.src_width)x\(.image.src_height) -> \(.image.width)x\(.image.height)" +
          " cropped=\(.image.cropped) rotated=\(.image.rotated)"' < "$TMP/resp.json"
   jq -r 'if .image.detect.detected
-         then "==> detected: area=\(.image.detect.area_fraction * 100 | floor)% aspect=\(.image.detect.aspect * 100 | floor / 100) fill=\(.image.detect.fill * 100 | floor)% angle=\(.image.detect.angle_degrees | floor)deg"
+         then "==> detected: area=\((.image.detect.area_fraction // 0) * 100 | floor)% aspect=\((.image.detect.aspect // 0) * 100 | floor / 100) fill=\((.image.detect.fill // 0) * 100 | floor)% angle=\((.image.detect.angle_degrees // 0) | floor)deg"
          else "!! no document detected (\(.image.detect.reason // "no reason given")); using the whole frame, expect worse extraction" end' < "$TMP/resp.json"
   jq -r '"==> model: \(.model) in \(.elapsed_ms)ms  tax_basis=\(.tax_basis) tax_evidence=\(.tax_evidence)"' < "$TMP/resp.json"
 

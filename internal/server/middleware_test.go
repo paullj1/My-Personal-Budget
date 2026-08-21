@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"my-personal-budget/internal/server/handlers"
 )
 
 // The server-wide write timeout has to clear the slowest legitimate handler, and a
@@ -66,4 +68,27 @@ func TestWithRouteTimeouts(t *testing.T) {
 			t.Errorf("deadline = %s, want ~5s", gotDeadline.Round(time.Second))
 		}
 	})
+}
+
+// scanFullPath is derived from the handler's constant so a route rename cannot
+// silently drop scans to the default deadline. Assert the derivation, and that it
+// is the path the timeout middleware actually recognises.
+func TestScanFullPathMatchesTheHandler(t *testing.T) {
+	if want := apiPrefix + handlers.ScanPath; scanFullPath != want {
+		t.Fatalf("scanFullPath = %q, want %q", scanFullPath, want)
+	}
+	if scanFullPath != "/api/v1/receipts/scan" {
+		t.Errorf("scanFullPath = %q; the API moved, so check the deadline wiring", scanFullPath)
+	}
+
+	var long bool
+	h := withRouteTimeouts(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dl, ok := r.Context().Deadline()
+		long = ok && time.Until(dl) > time.Minute
+	}), scanFullPath, 5*time.Minute, 20*time.Second)
+
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, scanFullPath, nil))
+	if !long {
+		t.Error("the scan path did not receive the long deadline")
+	}
 }

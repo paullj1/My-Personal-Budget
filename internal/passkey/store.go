@@ -10,20 +10,20 @@ import (
 )
 
 type ChallengeStore struct {
-	mu             sync.Mutex
-	regChallenges  map[string]string
-	authChallenges map[string]string
-	regSessions    map[string]webauthn.SessionData
-	authSessions   map[string]webauthn.SessionData
+	mu               sync.Mutex
+	regChallenges    map[string]string
+	authChallenges   map[string]string
+	regSessions      map[string]webauthn.SessionData
+	authSessions     map[string]webauthn.SessionData
 	authSessionsByID map[string]webauthn.SessionData
 }
 
 func NewChallengeStore() *ChallengeStore {
 	return &ChallengeStore{
-		regChallenges:  make(map[string]string),
-		authChallenges: make(map[string]string),
-		regSessions:    make(map[string]webauthn.SessionData),
-		authSessions:   make(map[string]webauthn.SessionData),
+		regChallenges:    make(map[string]string),
+		authChallenges:   make(map[string]string),
+		regSessions:      make(map[string]webauthn.SessionData),
+		authSessions:     make(map[string]webauthn.SessionData),
 		authSessionsByID: make(map[string]webauthn.SessionData),
 	}
 }
