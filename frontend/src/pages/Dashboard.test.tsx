@@ -58,13 +58,49 @@ afterEach(() => {
 });
 
 describe('Dashboard receipt scanning', () => {
-  it('offers scanning when the server reports the capability', async () => {
+  it('offers both a new photo and an existing one when scanning is available', async () => {
     stubApi({ receiptScan: true });
     renderDashboard();
     await openItemizeWizard();
 
-    expect(screen.getByRole('button', { name: /scan receipt/i })).toBeInTheDocument();
-    expect(screen.getByText(/scan a receipt to fill this in/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /take photo/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /choose photo/i })).toBeInTheDocument();
+    expect(screen.getByText(/take or choose a photo/i)).toBeInTheDocument();
+  });
+
+  it('only the camera input asks for the camera', async () => {
+    stubApi({ receiptScan: true });
+    renderDashboard();
+    await openItemizeWizard();
+
+    const camera = screen.getByTestId('receipt-camera-input');
+    const library = screen.getByTestId('receipt-library-input');
+
+    // `capture` is what opens the camera directly -- and on iOS it also removes
+    // "Photo Library" from the action sheet, so the library input must not set it.
+    expect(camera).toHaveAttribute('capture', 'environment');
+    expect(library).not.toHaveAttribute('capture');
+
+    // Both accept any image so an iPhone's HEIC library photos are selectable;
+    // the canvas step re-encodes to JPEG before upload.
+    expect(camera).toHaveAttribute('accept', 'image/*');
+    expect(library).toHaveAttribute('accept', 'image/*');
+  });
+
+  it('scans a picked file from the library', async () => {
+    stubApi({ receiptScan: true });
+    renderDashboard();
+    await openItemizeWizard();
+
+    const library = screen.getByTestId('receipt-library-input') as HTMLInputElement;
+    const file = new File(['not-a-real-jpeg'], 'IMG_2608.jpeg', { type: 'image/jpeg' });
+    fireEvent.change(library, { target: { files: [file] } });
+
+    // Normalization fails on a fake JPEG in jsdom, which is the point: the error
+    // surfaces and manual entry stays usable rather than the wizard hanging.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /save itemized receipt/i })).toBeInTheDocument()
+    );
   });
 
   it('hides scanning entirely when the endpoint is not configured', async () => {
@@ -74,8 +110,10 @@ describe('Dashboard receipt scanning', () => {
     await openItemizeWizard();
 
     // No button, and no copy advertising a feature that is not there.
-    expect(screen.queryByRole('button', { name: /scan receipt/i })).not.toBeInTheDocument();
-    expect(screen.queryByText(/scan a receipt/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /take photo/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /choose photo/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('receipt-camera-input')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('receipt-library-input')).not.toBeInTheDocument();
     expect(screen.getByText(/start with the receipt total/i)).toBeInTheDocument();
 
     // Manual itemizing is untouched: the fields and the save action remain.
@@ -106,7 +144,7 @@ describe('Dashboard receipt scanning', () => {
     renderDashboard();
     await openItemizeWizard();
 
-    expect(screen.queryByRole('button', { name: /scan receipt/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /take photo/i })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /save itemized receipt/i })).toBeInTheDocument();
   });
 

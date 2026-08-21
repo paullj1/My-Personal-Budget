@@ -119,7 +119,11 @@ func (h *APIHandler) scanReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		respondError(w, http.StatusUnsupportedMediaType, "could not read that image")
+		// The browser re-encodes to JPEG before upload, so this is mostly for direct
+		// API callers -- naming the formats saves them guessing. HEIC in particular
+		// is common straight off an iPhone and cannot be decoded here.
+		respondError(w, http.StatusUnsupportedMediaType,
+			"could not read that image; JPEG and PNG are supported")
 		return
 	}
 

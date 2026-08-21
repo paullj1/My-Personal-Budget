@@ -190,7 +190,13 @@ const Dashboard = () => {
     elapsedMs: number;
   } | null>(null);
   const scanAbort = useRef<AbortController | null>(null);
-  const scanInputRef = useRef<HTMLInputElement | null>(null);
+  // Two inputs rather than one. `capture` is what makes a file input open the
+  // camera directly, but on iOS it also removes "Photo Library" from the action
+  // sheet, so a single capture input can only ever take a new photo. Platforms
+  // disagree about what they offer when it is absent, so each source gets its own
+  // input and the choice is explicit.
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const libraryInputRef = useRef<HTMLInputElement | null>(null);
   const [shareEmail, setShareEmail] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [showToolbarFilterToggle, setShowToolbarFilterToggle] = useState(false);
@@ -685,8 +691,12 @@ const Dashboard = () => {
     setScanning(false);
     setScanError(null);
     setScanMeta(null);
-    if (scanInputRef.current) {
-      scanInputRef.current.value = '';
+    // Clear both, or re-picking the same file fires no change event.
+    if (cameraInputRef.current) {
+      cameraInputRef.current.value = '';
+    }
+    if (libraryInputRef.current) {
+      libraryInputRef.current.value = '';
     }
     if (resetMutation) {
       itemizeReceipt.reset();
@@ -760,8 +770,11 @@ const Dashboard = () => {
     } finally {
       setScanning(false);
       scanAbort.current = null;
-      if (scanInputRef.current) {
-        scanInputRef.current.value = '';
+      if (cameraInputRef.current) {
+        cameraInputRef.current.value = '';
+      }
+      if (libraryInputRef.current) {
+        libraryInputRef.current.value = '';
       }
     }
   };
@@ -1103,7 +1116,7 @@ const Dashboard = () => {
                   {/* Do not advertise scanning when the server has no inference
                       endpoint configured; there would be no button to press. */}
                   {scanEnabled
-                    ? 'Scan a receipt to fill this in, or start with the total and assign the line items you know. Anything left over drops into a catch-all budget.'
+                    ? 'Take or choose a photo of a receipt to fill this in, or start with the total and assign the line items you know. Anything left over drops into a catch-all budget.'
                     : 'Start with the receipt total and assign the line items you know. Anything left over drops into a catch-all budget.'}
                 </p>
               </div>
@@ -1111,11 +1124,25 @@ const Dashboard = () => {
                 {scanEnabled && (
                   <>
                     <input
-                      ref={scanInputRef}
+                      ref={cameraInputRef}
                       type="file"
                       accept="image/*"
                       capture="environment"
                       style={{ display: 'none' }}
+                      data-testid="receipt-camera-input"
+                      onChange={(e) => handleScanFile(e.target.files?.[0])}
+                    />
+                    {/* No capture attribute, so this opens the photo library or
+                        file picker instead of the camera. accept="image/*" still
+                        matches HEIC, which the canvas step re-encodes to JPEG
+                        before upload -- library photos on an iPhone are usually
+                        HEIC, which the server cannot decode on its own. */}
+                    <input
+                      ref={libraryInputRef}
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      data-testid="receipt-library-input"
                       onChange={(e) => handleScanFile(e.target.files?.[0])}
                     />
                     {scanning ? (
@@ -1123,14 +1150,24 @@ const Dashboard = () => {
                         Cancel scan
                       </button>
                     ) : (
-                      <button
-                        type="button"
-                        className="secondary button--sm"
-                        onClick={() => scanInputRef.current?.click()}
-                        disabled={!budgets.length}
-                      >
-                        📸 Scan receipt
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="secondary button--sm"
+                          onClick={() => cameraInputRef.current?.click()}
+                          disabled={!budgets.length}
+                        >
+                          📸 Take photo
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary button--sm"
+                          onClick={() => libraryInputRef.current?.click()}
+                          disabled={!budgets.length}
+                        >
+                          🖼 Choose photo
+                        </button>
+                      </>
                     )}
                   </>
                 )}
