@@ -1,9 +1,24 @@
-export function bufferFromBase64Url(value: string | ArrayBuffer | ArrayLike<number>): Uint8Array {
+/**
+ * Decodes base64url (or passes bytes through) as a Uint8Array backed by a plain
+ * ArrayBuffer.
+ *
+ * The buffer type is pinned because WebAuthn's BufferSource rejects a
+ * Uint8Array<ArrayBufferLike>, which is what you get from a view whose buffer
+ * might be a SharedArrayBuffer.
+ */
+export function bufferFromBase64Url(
+  value: string | ArrayBuffer | ArrayLike<number>
+): Uint8Array<ArrayBuffer> {
   if (value instanceof ArrayBuffer) {
     return new Uint8Array(value);
   }
   if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer);
+    // Copy only the view's own window. Reading value.buffer directly returned the
+    // entire backing buffer, so a subarray silently decoded its neighbours too.
+    const view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const copy = new Uint8Array(view.byteLength);
+    copy.set(view);
+    return copy;
   }
   if (Array.isArray(value)) {
     return new Uint8Array(value);

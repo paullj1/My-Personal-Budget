@@ -12,8 +12,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
-    "types": ["vite/client"]
+    "types": ["vite/client", "vitest/globals"]
   },
-  "include": ["src"],
+  // vitest.setup.ts belongs in the program: its jest-dom import is what types the
+  // custom matchers, and the setup file itself should be typechecked like any
+  // other source.
+  "include": ["src", "vitest.setup.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
