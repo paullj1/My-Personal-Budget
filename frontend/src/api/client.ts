@@ -53,18 +53,29 @@ export function hasAuthToken(): boolean {
   return !!authToken();
 }
 
-export async function request<T>(path: string, options: { method?: HTTPMethod; body?: unknown } = {}): Promise<T> {
-  const { method = 'GET', body } = options;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+export async function request<T>(
+  path: string,
+  options: { method?: HTTPMethod; body?: unknown; signal?: AbortSignal } = {}
+): Promise<T> {
+  const { method = 'GET', body, signal } = options;
+  const headers: Record<string, string> = {};
   const token = authToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
 
+  // FormData must set its own Content-Type so the browser can add the multipart
+  // boundary; forcing application/json here would corrupt an image upload.
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
+  if (!isForm) {
+    headers['Content-Type'] = 'application/json';
+  }
+
   const res = await fetch(`${apiBase}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined
+    signal,
+    body: isForm ? (body as FormData) : body ? JSON.stringify(body) : undefined
   });
 
   if (!res.ok) {

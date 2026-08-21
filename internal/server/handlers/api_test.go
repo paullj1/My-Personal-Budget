@@ -30,6 +30,36 @@ type fakeStore struct {
 	removeErr     error
 	payrollCount  int
 	payrollErr    error
+
+	committedReceipt *store.ReceiptInput
+	commitResult     store.CommitReceiptResult
+	commitErr        error
+	suggestions      map[string]int64
+	suggestErr       error
+	receipt          *store.Receipt
+	receiptItems     []store.CommittedReceiptItem
+}
+
+func (f *fakeStore) CommitReceipt(ctx context.Context, userID *int64, in store.ReceiptInput) (store.CommitReceiptResult, error) {
+	f.committedReceipt = &in
+	if f.commitErr != nil {
+		return store.CommitReceiptResult{}, f.commitErr
+	}
+	return f.commitResult, nil
+}
+
+func (f *fakeStore) SuggestBudgets(ctx context.Context, userID *int64, keys []string) (map[string]int64, error) {
+	if f.suggestErr != nil {
+		return nil, f.suggestErr
+	}
+	return f.suggestions, nil
+}
+
+func (f *fakeStore) GetReceipt(ctx context.Context, id int64, userID *int64) (store.Receipt, []store.CommittedReceiptItem, error) {
+	if f.receipt == nil {
+		return store.Receipt{}, nil, store.ErrNotFound
+	}
+	return *f.receipt, f.receiptItems, nil
 }
 
 func (f *fakeStore) ListBudgets(ctx context.Context, userID *int64) ([]store.Budget, error) {
@@ -409,5 +439,45 @@ func TestHandlePayrollRun_SucceedsForUser(t *testing.T) {
 	}
 	if resp["count"] != float64(3) {
 		t.Fatalf("expected count 3, got %v", resp["count"])
+	}
+}
+
+// A list endpoint that returns JSON null forces every client to guard against it,
+// and the dashboard's guard allocated a new array per render, hanging an empty
+// account. Empty must serialize as [].
+func TestListEndpointsReturnEmptyArrayNotNull(t *testing.T) {
+	cfg := config.Config{RelyingPartyID: "localhost"}
+	h, err := NewAPIHandler(cfg, &fakeStore{}, passkey.NewChallengeStore())
+	if err != nil {
+		t.Fatalf("NewAPIHandler: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"budgets", "/budgets"},
+		{"transactions", "/budgets/1/transactions"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+			}
+			if strings.Contains(rec.Body.String(), `"data":null`) {
+				t.Errorf("response contains a null data list: %s", rec.Body.String())
+			}
+			var payload struct {
+				Data []json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if payload.Data == nil {
+				t.Errorf("data decoded as nil rather than an empty array: %s", rec.Body.String())
+			}
+		})
 	}
 }

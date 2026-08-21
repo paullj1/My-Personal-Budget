@@ -1,4 +1,4 @@
-import { FocusEvent, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FocusEvent, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   useInfiniteQuery,
@@ -8,6 +8,15 @@ import {
 } from '@tanstack/react-query';
 
 import { request } from '../api/client';
+import { normalizeReceiptImage } from '../utils/receiptImage';
+import {
+  ItemizedLine,
+  buildReceiptCommit,
+  fromCents,
+  lineTotalCents,
+  toCents,
+  toDateInput
+} from '../utils/receiptLines';
 
 type Budget = {
   id: number;
@@ -56,12 +65,46 @@ type NewTxnState = {
   transferBudgetId: number | null;
 };
 
-type ItemizedLine = {
-  id: string;
-  budgetId: number | null;
-  description: string;
-  amount: number;
+type Reconciliation = {
+  ok: boolean;
+  items_sum_cents: number;
+  subtotal_cents: number;
+  items_delta_cents: number;
+  computed_total_cents: number;
+  printed_total_cents: number;
+  total_delta_cents: number;
+  message?: string;
 };
+
+type ScanItem = {
+  position: number;
+  line_text: string;
+  norm_key: string;
+  description: string;
+  marker?: string;
+  taxable: boolean | null;
+  amount_cents: number;
+  tax_cents: number;
+  adjust_cents: number;
+  total_cents: number;
+  suggested_budget_id: number | null;
+  suggestion_source?: string;
+};
+
+type ScanResponse = {
+  merchant: string;
+  purchased_at: string | null;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  tax_evidence: string;
+  tax_basis: string;
+  reconciliation: Reconciliation;
+  items: ScanItem[];
+  elapsed_ms: number;
+};
+
+type FeaturesResponse = { features?: { receipt_scan?: boolean } };
 
 const INITIAL_TXN: NewTxnState = {
   description: '',
@@ -84,7 +127,9 @@ const newLine = (): ItemizedLine => ({
   id: Math.random().toString(36).slice(2, 10),
   budgetId: null,
   description: '',
-  amount: 0
+  amount: 0,
+  taxCents: 0,
+  adjustCents: 0
 });
 const splitEvenly = (total: number, buckets: number) => {
   if (buckets <= 0) return [];
@@ -136,6 +181,16 @@ const Dashboard = () => {
   const [receiptDescription, setReceiptDescription] = useState('');
   const [catchAllBudgetId, setCatchAllBudgetId] = useState<number | null>(null);
   const [itemizedLines, setItemizedLines] = useState<ItemizedLine[]>([newLine()]);
+  const [receiptDate, setReceiptDate] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanMeta, setScanMeta] = useState<{
+    reconciliation: Reconciliation;
+    taxCents: number;
+    elapsedMs: number;
+  } | null>(null);
+  const scanAbort = useRef<AbortController | null>(null);
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
   const [shareEmail, setShareEmail] = useState('');
   const [showFilter, setShowFilter] = useState(false);
   const [showToolbarFilterToggle, setShowToolbarFilterToggle] = useState(false);
@@ -163,12 +218,24 @@ const Dashboard = () => {
     queryKey: ['budgets'],
     queryFn: () => request<BudgetsResponse>('/api/v1/budgets')
   });
+  // The API reports whether an inference endpoint is configured; without one the
+  // scan button stays hidden and manual itemizing behaves exactly as before.
+  const featuresQuery = useQuery({
+    queryKey: ['features'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => request<FeaturesResponse>('/api/v1/')
+  });
+  const scanEnabled = featuresQuery.data?.features?.receipt_scan === true;
   const autoBalanceQuery = useQuery({
     enabled: !!settingsBudget,
     queryKey: ['auto-balance', settingsBudget],
     queryFn: () => request<AutoBalanceConfig>(`/api/v1/budgets/${settingsBudget}/auto-balance`)
   });
-  const budgets = budgetsQuery.data?.data || [];
+  // Memoized so the identity is stable across renders. Without this, an empty
+  // list -- which the API sends as `data: null` -- produced a fresh [] on every
+  // render, and the effects keyed on `budgets` re-ran forever. A user with no
+  // budgets yet hung the dashboard.
+  const budgets = useMemo(() => budgetsQuery.data?.data ?? [], [budgetsQuery.data]);
   useEffect(() => {
     if (!settingsBudget) {
       setEditingBudgetName('');
@@ -211,12 +278,14 @@ const Dashboard = () => {
       setCatchAllBudgetId(null);
       return;
     }
-    setItemizedLines((prev) =>
-      prev.map((line) => {
+    setItemizedLines((prev) => {
+      const next = prev.map((line) => {
         if (!line.budgetId) return line;
         return budgets.some((b) => b.id === line.budgetId) ? line : { ...line, budgetId: null };
-      })
-    );
+      });
+      // map() always allocates; only take the new array if a line really changed.
+      return next.some((line, idx) => line !== prev[idx]) ? next : prev;
+    });
     if (catchAllBudgetId && budgets.some((b) => b.id === catchAllBudgetId)) return;
     setCatchAllBudgetId(budgets[0].id);
   }, [budgets, catchAllBudgetId]);
@@ -270,14 +339,10 @@ const Dashboard = () => {
   const wizardReady =
     selectedNegatives.length > 0 && selectedPositives.length > 0 && totalDeficit > 0 && positiveAllocation.length > 0;
   const coverageShortfall = wizardReady && positiveCoverage + 1e-6 < totalDeficit;
+  // Must include each line's allocated tax, or a scanned receipt looks
+  // under-allocated by exactly its tax and double-counts it into the catch-all.
   const allocatedTotal = useMemo(
-    () =>
-      round2(
-        itemizedLines.reduce((sum, line) => {
-          if (!Number.isFinite(line.amount)) return sum;
-          return sum + (line.amount || 0);
-        }, 0)
-      ),
+    () => round2(fromCents(itemizedLines.reduce((sum, line) => sum + lineTotalCents(line), 0))),
     [itemizedLines]
   );
   const itemizeRemainder = useMemo(() => round2(receiptTotal - allocatedTotal), [receiptTotal, allocatedTotal]);
@@ -293,8 +358,17 @@ const Dashboard = () => {
   const itemizeReady = receiptTotal > 0 && catchAllBudgetId !== null && activeItemLines.length > 0 && !overAllocated;
 
   useEffect(() => {
-    setSelectedNegatives((prev) => prev.filter((id) => budgets.some((b) => b.id === id && b.balance < 0)));
-    setSelectedPositives((prev) => prev.filter((id) => budgets.some((b) => b.id === id && b.balance > 0)));
+    // filter() always allocates, so returning it unconditionally changed state
+    // identity on every run and scheduled another render. Keep the previous array
+    // when nothing was actually dropped.
+    const keepUnchanged = (prev: number[], next: number[]) =>
+      next.length === prev.length ? prev : next;
+    setSelectedNegatives((prev) =>
+      keepUnchanged(prev, prev.filter((id) => budgets.some((b) => b.id === id && b.balance < 0)))
+    );
+    setSelectedPositives((prev) =>
+      keepUnchanged(prev, prev.filter((id) => budgets.some((b) => b.id === id && b.balance > 0)))
+    );
   }, [budgets]);
   const transferOptions = useMemo(() => budgets.filter((b) => b.id !== newTxnBudget), [budgets, newTxnBudget]);
   const transferDisabled = transferOptions.length === 0;
@@ -387,43 +461,28 @@ const Dashboard = () => {
   const itemizeReceipt = useMutation({
     mutationFn: async (payload: {
       description: string;
+      date: string;
       total: number;
       catchAllBudgetId: number;
       lines: ItemizedLine[];
+      reconciled: boolean;
     }) => {
-      const baseDescription = payload.description.trim() || 'Itemized receipt';
-      if (payload.total <= 0) {
-        throw new Error('Total must be greater than zero.');
-      }
-      const lines = payload.lines
-        .filter((line): line is ItemizedLine & { budgetId: number } => line.budgetId !== null && line.amount > 0)
-        .map((line) => ({ ...line, description: line.description.trim() }));
-      if (!lines.length) {
-        throw new Error('Add at least one line item with a budget and amount.');
-      }
-      const allocated = round2(lines.reduce((sum, line) => sum + line.amount, 0));
-      const remainder = round2(payload.total - allocated);
-      if (remainder < -0.009) {
-        throw new Error('Allocations exceed the receipt total.');
-      }
+      const body = buildReceiptCommit({
+        description: payload.description,
+        date: payload.date,
+        total: payload.total,
+        catchAllBudgetId: payload.catchAllBudgetId,
+        lines: payload.lines,
+        reconciled: payload.reconciled
+      });
 
-      const touched = new Set<number>();
-      for (const line of lines) {
-        const desc = line.description ? `${baseDescription} - ${line.description}` : baseDescription;
-        await request(`/api/v1/budgets/${line.budgetId}/transactions`, {
-          method: 'POST',
-          body: { description: desc, credit: false, amount: line.amount }
-        });
-        touched.add(line.budgetId);
-      }
-      if (remainder > 0.009) {
-        await request(`/api/v1/budgets/${payload.catchAllBudgetId}/transactions`, {
-          method: 'POST',
-          body: { description: `${baseDescription} - catch-all`, credit: false, amount: remainder }
-        });
-        touched.add(payload.catchAllBudgetId);
-      }
-      return { budgetIds: Array.from(touched) };
+      // One request, one database transaction. The previous implementation
+      // looped POSTs and could leave a receipt half-committed.
+      const result = await request<{ budget_ids: number[] }>('/api/v1/receipts', {
+        method: 'POST',
+        body
+      });
+      return { budgetIds: result.budget_ids || [] };
     },
     onSuccess: (result) => {
       resetItemizeWizard(false);
@@ -616,12 +675,94 @@ const Dashboard = () => {
   const removeItemLine = (id: string) =>
     setItemizedLines((prev) => (prev.length <= 1 ? prev : prev.filter((line) => line.id !== id)));
   const resetItemizeWizard = (resetMutation = true) => {
+    scanAbort.current?.abort();
+    scanAbort.current = null;
     setItemizeWizardOpen(false);
     setReceiptTotal(0);
     setReceiptDescription('');
+    setReceiptDate('');
     setItemizedLines([newLine()]);
+    setScanning(false);
+    setScanError(null);
+    setScanMeta(null);
+    if (scanInputRef.current) {
+      scanInputRef.current.value = '';
+    }
     if (resetMutation) {
       itemizeReceipt.reset();
+    }
+  };
+
+  const cancelScan = () => {
+    scanAbort.current?.abort();
+    scanAbort.current = null;
+    setScanning(false);
+  };
+
+  const handleScanFile = async (file: File | null | undefined) => {
+    if (!file) return;
+    setScanError(null);
+    setScanMeta(null);
+    // Clear before the request, not after it succeeds. Assigning only on success
+    // left a failed or cancelled rescan showing the previous receipt's merchant,
+    // total, date and lines -- all still committable as if they were this
+    // receipt's. Starting from a clean slate means a failure shows an empty form
+    // and an error, which is recoverable; committing receipt A's total against
+    // receipt B's items is not.
+    setReceiptDescription('');
+    setReceiptTotal(0);
+    setReceiptDate('');
+    setItemizedLines([newLine()]);
+    setScanning(true);
+    const controller = new AbortController();
+    scanAbort.current = controller;
+    try {
+      // Applies EXIF orientation and caps the upload size. The server does the
+      // document detection, crop and deskew that make extraction reliable.
+      const normalized = await normalizeReceiptImage(file);
+      const form = new FormData();
+      form.append('image', normalized.blob, 'receipt.jpg');
+      const scan = await request<ScanResponse>('/api/v1/receipts/scan', {
+        method: 'POST',
+        body: form,
+        signal: controller.signal
+      });
+
+      const scanned: ItemizedLine[] = scan.items.map((item) => ({
+        id: Math.random().toString(36).slice(2, 10),
+        budgetId: item.suggested_budget_id ?? null,
+        description: item.description,
+        amount: fromCents(item.amount_cents),
+        lineText: item.line_text,
+        normKey: item.norm_key,
+        marker: item.marker,
+        taxable: item.taxable,
+        taxCents: item.tax_cents,
+        adjustCents: item.adjust_cents,
+        suggested: item.suggested_budget_id !== null
+      }));
+
+      setReceiptDescription(scan.merchant || '');
+      setReceiptTotal(scan.total_cents > 0 ? fromCents(scan.total_cents) : 0);
+      setReceiptDate(toDateInput(scan.purchased_at));
+      setItemizedLines(scanned.length ? scanned : [newLine()]);
+      setScanMeta({
+        reconciliation: scan.reconciliation,
+        taxCents: scan.tax_cents,
+        elapsedMs: scan.elapsed_ms
+      });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        return;
+      }
+      // Never a dead end: whatever was captured stays editable by hand.
+      setScanError((err as Error).message || 'Could not read that receipt.');
+    } finally {
+      setScanning(false);
+      scanAbort.current = null;
+      if (scanInputRef.current) {
+        scanInputRef.current.value = '';
+      }
     }
   };
 
@@ -959,23 +1100,78 @@ const Dashboard = () => {
                 <p className="eyebrow">Receipt helper</p>
                 <h2>Itemize receipt</h2>
                 <p className="muted">
-                  Start with the receipt total, assign the line items you know, and drop the remainder into a catch-all budget automatically.
+                  {/* Do not advertise scanning when the server has no inference
+                      endpoint configured; there would be no button to press. */}
+                  {scanEnabled
+                    ? 'Scan a receipt to fill this in, or start with the total and assign the line items you know. Anything left over drops into a catch-all budget.'
+                    : 'Start with the receipt total and assign the line items you know. Anything left over drops into a catch-all budget.'}
                 </p>
               </div>
-              <button
-                type="button"
-                className="icon ghost"
-                aria-label="Close itemize wizard"
-                onClick={() => resetItemizeWizard()}
-              >
-                ✖
-              </button>
+              <div className="actions" style={{ gap: 8, alignItems: 'center' }}>
+                {scanEnabled && (
+                  <>
+                    <input
+                      ref={scanInputRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      style={{ display: 'none' }}
+                      onChange={(e) => handleScanFile(e.target.files?.[0])}
+                    />
+                    {scanning ? (
+                      <button type="button" className="secondary button--sm" onClick={cancelScan}>
+                        Cancel scan
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="secondary button--sm"
+                        onClick={() => scanInputRef.current?.click()}
+                        disabled={!budgets.length}
+                      >
+                        📸 Scan receipt
+                      </button>
+                    )}
+                  </>
+                )}
+                <button
+                  type="button"
+                  className="icon ghost"
+                  aria-label="Close itemize wizard"
+                  onClick={() => resetItemizeWizard()}
+                >
+                  ✖
+                </button>
+              </div>
             </div>
 
             {!budgets.length ? (
               <p className="error">Create a budget first to itemize a receipt.</p>
             ) : (
               <>
+                {scanning && (
+                  <div className="badge" style={{ marginBottom: 12 }}>
+                    Reading the receipt… this usually takes under a minute.
+                  </div>
+                )}
+                {scanError && (
+                  <p className="error">
+                    {scanError} You can still enter the items by hand below.
+                  </p>
+                )}
+                {scanMeta && !scanMeta.reconciliation.ok && (
+                  <p className="error">
+                    {scanMeta.reconciliation.message || 'The scanned amounts do not add up.'} Check the highlighted
+                    amounts before saving.
+                  </p>
+                )}
+                {scanMeta && scanMeta.reconciliation.ok && (
+                  <div className="badge" style={{ marginBottom: 12 }}>
+                    Scanned and balanced — {itemizedLines.length} item
+                    {itemizedLines.length === 1 ? '' : 's'}, {formatNumber(fromCents(scanMeta.taxCents))} tax spread
+                    across them.
+                  </div>
+                )}
                 <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 }}>
                   <label>
                     Receipt description
@@ -996,6 +1192,14 @@ const Dashboard = () => {
                       onFocus={selectOnFocus}
                       onChange={(e) => setReceiptTotal(Number(e.target.value))}
                       required
+                    />
+                  </label>
+                  <label>
+                    Receipt date
+                    <input
+                      type="date"
+                      value={receiptDate}
+                      onChange={(e) => setReceiptDate(e.target.value)}
                     />
                   </label>
                   <label>
@@ -1041,11 +1245,11 @@ const Dashboard = () => {
                         }}
                       >
                         <label>
-                          Budget
+                          Budget {line.suggested && <span className="eyebrow">suggested</span>}
                           <select
                             value={line.budgetId ?? ''}
                             onChange={(e) =>
-                              updateItemLine(line.id, { budgetId: Number(e.target.value) || null })
+                              updateItemLine(line.id, { budgetId: Number(e.target.value) || null, suggested: false })
                             }
                           >
                             <option value="">Select</option>
@@ -1075,6 +1279,12 @@ const Dashboard = () => {
                             onFocus={selectOnFocus}
                             onChange={(e) => updateItemLine(line.id, { amount: Number(e.target.value) })}
                           />
+                          {(line.taxCents || 0) > 0 && (
+                            <span className="muted">
+                              +{formatNumber(fromCents(line.taxCents || 0))} tax ={' '}
+                              {formatNumber(fromCents(lineTotalCents(line)))}
+                            </span>
+                          )}
                         </label>
                         <div className="actions" style={{ justifyContent: 'flex-end' }}>
                           <button
@@ -1126,12 +1336,14 @@ const Dashboard = () => {
                       if (!catchAllBudgetId) return;
                       itemizeReceipt.mutate({
                         description: receiptDescription,
+                        date: receiptDate,
                         total: receiptTotal,
                         catchAllBudgetId,
-                        lines: itemizedLines
+                        lines: itemizedLines,
+                        reconciled: scanMeta ? scanMeta.reconciliation.ok : true
                       });
                     }}
-                    disabled={!itemizeReady || itemizeReceipt.isPending}
+                    disabled={!itemizeReady || itemizeReceipt.isPending || scanning}
                   >
                     {itemizeReceipt.isPending ? 'Saving…' : 'Save itemized receipt'}
                   </button>

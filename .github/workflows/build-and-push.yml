@@ -1,18 +1,44 @@
-name: Build and Push Image
+name: CI
 
 on:
   push:
     branches:
       - main
+  # Without this, nothing was checked until after a merge: the previous config ran
+  # only on pushes to main, so a pull request got no signal at all.
+  pull_request:
   workflow_dispatch: {}
 
 permissions:
   contents: read
   packages: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
+  go:
+    name: Go
     runs-on: ubuntu-latest
+
+    services:
+      # The store's receipt tests prove that committing a receipt is atomic, which
+      # can only be shown against a real database. Without this they skip silently,
+      # so the riskiest code in the repo went unexercised in CI.
+      postgres:
+        image: postgres:11-alpine
+        env:
+          POSTGRES_PASSWORD: budgetpass
+          POSTGRES_DB: budget
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,10 +46,42 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          # Read the version from go.mod rather than pinning it here, which had
+          # drifted to 1.22 while go.mod asked for 1.25.
+          go-version-file: go.mod
+          cache: true
 
-      - name: Run Go tests
-        run: GOFLAGS=-mod=mod go test ./...
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt needed on:"
+            echo "$unformatted"
+            gofmt -d ./cmd ./internal
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Apply database schema
+        env:
+          PGPASSWORD: budgetpass
+        run: psql -h localhost -U postgres -d budget -v ON_ERROR_STOP=1 -f db/schema.sql
+
+      - name: Test
+        env:
+          # Opts the store's integration tests in; they skip when this is unset.
+          TEST_DATABASE_URL: postgres://postgres:budgetpass@localhost:5432/budget?sslmode=disable
+        run: go test ./...
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -32,15 +90,36 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Run frontend tests
-        run: |
-          cd frontend
-          npm ci
-          npm test
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: frontend
+        # Nothing ran tsc before, which is how 60 type errors accumulated unnoticed
+        # -- including a real one where a Uint8Array was passed as a WebAuthn
+        # BufferSource. `npm test` does not typecheck.
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Test
+        working-directory: frontend
+        env:
+          # Deliberately not UTC. Date handling that looks correct in UTC can be a
+          # day out elsewhere, which is exactly the bug that reached review.
+          TZ: America/New_York
+        run: npm test
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
 
   build:
+    name: Build and push image
     runs-on: ubuntu-latest
-    needs: test
+    needs: [go, frontend]
+    # Publishing belongs to main only; pull requests just get the checks above.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
