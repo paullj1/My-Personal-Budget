@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"my-personal-budget/internal/auth"
 	"my-personal-budget/internal/config"
@@ -613,5 +614,43 @@ func TestScanPathRoutesToTheScanHandler(t *testing.T) {
 	h.Router().ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d at %s, want 503 from the scan handler", rec.Code, ScanPath)
+	}
+}
+
+func TestPlausibleReceiptDate(t *testing.T) {
+	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
+	at := func(y int, m time.Month, d int) *time.Time {
+		v := time.Date(y, m, d, 9, 0, 0, 0, time.UTC)
+		return &v
+	}
+
+	cases := []struct {
+		name string
+		in   *time.Time
+		keep bool
+	}{
+		{"today", at(2026, 8, 22), true},
+		{"last week", at(2026, 8, 15), true},
+		{"a year old", at(2025, 9, 1), true},
+		{"nil stays nil", nil, false},
+		{"far future is a misread", at(2027, 1, 1), false},
+		{"ancient is a misread", at(2019, 3, 4), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := plausibleReceiptDate(tc.in, now)
+			if tc.keep && got == nil {
+				t.Errorf("expected the date to be kept")
+			}
+			if !tc.keep && got != nil {
+				t.Errorf("expected the date to be dropped, got %v", got)
+			}
+		})
+	}
+
+	// A day of slack for timezone differences between the receipt and the server.
+	tomorrow := now.AddDate(0, 0, 1).Add(-time.Hour)
+	if plausibleReceiptDate(&tomorrow, now) == nil {
+		t.Error("a few hours ahead should be tolerated, not dropped")
 	}
 }

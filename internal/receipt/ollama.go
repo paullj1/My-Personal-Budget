@@ -91,28 +91,32 @@ const extractPrompt = `Extract this receipt into JSON. The image may be rotated.
 
 RULES
 1. Copy text and numbers exactly. Perform NO arithmetic.
-2. Every purchased item goes in items, in printed order. Do not skip or duplicate any item.
-3. Sub-lines such as "Regular Price $39.99" or "Buy1Get1 50%off" are INFORMATIONAL when the
-   item amount is already the net price. They are NOT adjustments. Do not emit them.
-4. A savings SUMMARY line such as "YOUR TOTAL SAVINGS THIS TRIP: $20.00" restates a discount
-   already reflected in the item prices. It is NOT an adjustment. Omit it. Only emit an
-   adjustment for a discount printed as its own separately deducted line.
-5. Record each taxability marker verbatim in marker (T, TF, N, F) and set taxable accordingly.
-   Use null for taxable when no marker is visible.
-6. If a tax line prints its own base, as in "6.00000 on $70.66", put 70.66 in base and the
+2. Every purchased item goes in items, in printed order. Repeated items are normal --
+   three "Baked Potato" lines are three items, not one.
+3. A number left of the description is the quantity; the price is the rightmost number.
+   Never put a quantity or product code in amount.
+4. A sub-line with no price, or a price of [0.00], modifies the item above it. It is NOT an
+   item and NOT an adjustment. Omit it. Same for "Regular Price $39.99" lines.
+5. adjustments is ONLY for a discount printed as its own line and subtracted from the
+   total. A summary of money saved or a tip suggestion is NOT an adjustment: leave
+   adjustments empty for "YOUR TOTAL SAVINGS THIS TRIP: $20.00", "18% 75.78" and the like.
+6. SUBTOTAL, TAX, TOTAL, payment, auth code, gratuity notes, survey text and department
+   headers such as GROCERY or KITCHEN are NOT items.
+7. Record any taxability marker (T, TF, N, F) verbatim in marker and set taxable to match.
+8. If a tax line prints its own base, as in "6.00000 on $70.66", put 70.66 in base and the
    rate as a decimal (0.06) in rate.
-7. SUBTOTAL, TAX, TOTAL, payment, savings, auth code and survey lines are NOT items.
-8. Department headers such as GROCERY, KITCHEN, PRODUCE, HBA or ELECTRONICS label the
-   items printed beneath them. They are NOT items and have no amount. Skip them.
-9. An item line has a product name AND a price on the same line. The long leading digits
-   are a product code, never a price. A price has a decimal point and usually a currency
-   symbol. Never copy a product code into amount.
-10. Use null when something is not visible. A missing date is null, not today.
-11. Set tax_evidence to describe what the receipt showed: per_line_flags when items carry
-   taxability markers, single_rate or multi_rate when only tax lines do, otherwise unknown.`
+9. Copy the printed date into purchased_at. Use null for anything not visible.`
 
-// extractSchema constrains generation. Note the absence of a confidence field:
-// it measured 1.0 on a 50%-wrong extraction and is worse than useless.
+// extractSchema constrains generation.
+//
+// A "transcription" field was tried here, declared first so the model would read
+// the whole receipt before structuring it. On one encoding of a dim 14-item
+// restaurant check it turned 6 items into 14, but across other encodings of the
+// same photo it was no better than without, while costing 40-60% more wall clock
+// on every scan. The apparent win did not survive measurement, so it is gone.
+//
+// Note the absence of a confidence field: it measured 1.0 on a 50%-wrong
+// extraction and is worse than useless.
 const extractSchema = `{
   "type": "object",
   "properties": {

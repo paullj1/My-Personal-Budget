@@ -28,10 +28,13 @@ type scanResponse struct {
 	TaxEvidence    string                 `json:"tax_evidence"`
 	TaxBasis       string                 `json:"tax_basis"`
 	Reconciliation receipt.Reconciliation `json:"reconciliation"`
-	Items          []scanItem             `json:"items"`
-	Image          receipt.NormalizeInfo  `json:"image"`
-	Model          string                 `json:"model"`
-	ElapsedMS      int64                  `json:"elapsed_ms"`
+	// Notes records corrections made while allocating, so an adjustment that was
+	// dropped for not matching the printed total is visible rather than silent.
+	Notes     []string              `json:"notes,omitempty"`
+	Items     []scanItem            `json:"items"`
+	Image     receipt.NormalizeInfo `json:"image"`
+	Model     string                `json:"model"`
+	ElapsedMS int64                 `json:"elapsed_ms"`
 }
 
 type scanItem struct {
@@ -143,6 +146,14 @@ func (h *APIHandler) scanReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	alloc := receipt.Allocate(extraction)
+	if !alloc.Reconciliation.OK {
+		// The transcription is what the model actually read, so it is the one thing
+		// worth having when an extraction does not add up.
+		log.Printf("receipt scan did not reconcile (%s); model read %d lines: %q",
+			alloc.Reconciliation.Message,
+			len(strings.Split(strings.TrimSpace(extraction.Transcription), "\n")),
+			extraction.Transcription)
+	}
 
 	keys := make([]string, 0, len(alloc.Lines))
 	for _, l := range alloc.Lines {
@@ -157,7 +168,7 @@ func (h *APIHandler) scanReceipt(w http.ResponseWriter, r *http.Request) {
 
 	resp := scanResponse{
 		Merchant:       alloc.Merchant,
-		PurchasedAt:    alloc.PurchasedAt,
+		PurchasedAt:    plausibleReceiptDate(alloc.PurchasedAt, time.Now()),
 		Currency:       alloc.Currency,
 		SubtotalCents:  alloc.SubtotalCents,
 		TaxCents:       alloc.TaxCents,
@@ -166,6 +177,7 @@ func (h *APIHandler) scanReceipt(w http.ResponseWriter, r *http.Request) {
 		TaxEvidence:    alloc.TaxEvidence,
 		TaxBasis:       alloc.TaxBasis,
 		Reconciliation: alloc.Reconciliation,
+		Notes:          alloc.Notes,
 		Image:          info,
 		Model:          h.cfg.ReceiptOCRModel,
 		ElapsedMS:      elapsed.Milliseconds(),
@@ -384,4 +396,28 @@ func statusForUpload(err error) int {
 		return http.StatusRequestEntityTooLarge
 	}
 	return http.StatusBadRequest
+}
+
+// plausibleReceiptDate filters a model-suggested date.
+//
+// The date sits in small, low-contrast print and is misread often enough not to
+// be trusted: on a clear photo reading "08/20/2026 08:40 AM" the model
+// transcribed "05/20/2026 10:41". A wrong month is silent and books spending to
+// the wrong period, so anything implausible is dropped and the review field is
+// left empty for the user to fill rather than pre-filled with a guess.
+//
+// This only screens the suggestion. A date the user types on commit is their
+// explicit choice and is never second-guessed.
+func plausibleReceiptDate(t *time.Time, now time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	// A day of slack absorbs timezone differences between the receipt and here.
+	if t.After(now.AddDate(0, 0, 1)) {
+		return nil
+	}
+	if t.Before(now.AddDate(-2, 0, 0)) {
+		return nil
+	}
+	return t
 }

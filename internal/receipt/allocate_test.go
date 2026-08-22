@@ -477,3 +477,65 @@ func TestAllocateDeltasAreSelfConsistent(t *testing.T) {
 		t.Errorf("total_delta = %d, want 0", got.Reconciliation.TotalDeltaCents)
 	}
 }
+
+// Models reliably mistake a savings summary for a discount. The printed total is
+// the arbiter: if dropping the adjustments makes the arithmetic work, they were
+// never part of the total.
+func TestAllocateDropsAdjustmentsThatDoNotReconcile(t *testing.T) {
+	ex := targetReceipt()
+	// "YOUR TOTAL SAVINGS THIS TRIP: $20.00" arriving as a +$20 adjustment.
+	ex.Adjustments = []ExAdjust{{Label: "YOUR TOTAL SAVINGS THIS TRIP", Amount: 20.00}}
+
+	got := Allocate(ex)
+	if !got.Reconciliation.OK {
+		t.Fatalf("expected the phantom adjustment to be dropped: %+v", got.Reconciliation)
+	}
+	if got.AdjustCents != 0 {
+		t.Errorf("adjust = %d, want 0", got.AdjustCents)
+	}
+	sum := 0
+	for _, l := range got.Lines {
+		sum += l.TotalCents
+	}
+	if sum != 7490 {
+		t.Errorf("line totals = %d, want the printed 7490", sum)
+	}
+	// The correction must be visible, not silent.
+	if len(got.Notes) == 0 {
+		t.Error("expected a note explaining the dropped adjustment")
+	}
+}
+
+// A real discount that makes the receipt add up must be kept.
+func TestAllocateKeepsAdjustmentsThatReconcile(t *testing.T) {
+	ex := targetReceipt()
+	ex.Adjustments = []ExAdjust{{Label: "STORE COUPON", Amount: -5.00}}
+	ex.Total = f(69.90)
+
+	got := Allocate(ex)
+	if !got.Reconciliation.OK {
+		t.Fatalf("expected reconciliation to pass: %+v", got.Reconciliation)
+	}
+	if got.AdjustCents != -500 {
+		t.Errorf("adjust = %d, want -500 kept", got.AdjustCents)
+	}
+	if len(got.Notes) != 0 {
+		t.Errorf("nothing was dropped, so there should be no note: %v", got.Notes)
+	}
+}
+
+// If dropping them does not help either, keep the original result so the user
+// sees the real discrepancy rather than a differently-wrong one.
+func TestAllocateKeepsAdjustmentsWhenDroppingDoesNotHelp(t *testing.T) {
+	ex := targetReceipt()
+	ex.Adjustments = []ExAdjust{{Label: "MYSTERY", Amount: 3.00}}
+	ex.Total = f(999.00)
+
+	got := Allocate(ex)
+	if got.Reconciliation.OK {
+		t.Fatal("expected reconciliation to fail")
+	}
+	if got.AdjustCents != 300 {
+		t.Errorf("adjust = %d, want the original 300 retained", got.AdjustCents)
+	}
+}

@@ -288,8 +288,32 @@ func TestExtractSchemaIsValidJSON(t *testing.T) {
 	if _, has := props["confidence"]; has {
 		t.Error("confidence must stay out of the schema: it measured 1.0 on a 50%-wrong extraction")
 	}
+
 	tl := props["tax_lines"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
 	if _, has := tl["base"]; !has {
 		t.Error("tax_lines.base missing: it is the strongest taxable-set signal")
+	}
+}
+
+// Each of these rules exists because its absence produced a specific wrong answer.
+func TestExtractPromptKeepsHardWonRules(t *testing.T) {
+	cases := []struct{ needle, why string }{
+		{"Repeated items are normal", "three Baked Potato lines are three items"},
+		{"quantity", "a leading quantity was being read as the price"},
+		{"[0.00]", "zero-priced modifiers were emitted as items"},
+		{"18% 75.78", "a tip guide was read as a charge"},
+		{"GROCERY", "department headers were emitted as items"},
+		{"6.00000 on $70.66", "the printed tax base is the strongest taxability signal"},
+		{"NO arithmetic", "the server does every calculation, in cents"},
+	}
+	for _, tc := range cases {
+		if !strings.Contains(extractPrompt, tc.needle) {
+			t.Errorf("prompt no longer mentions %q (%s)", tc.needle, tc.why)
+		}
+	}
+	// Long prompts measurably diluted the reading step: at 12 rules the model
+	// transcribed 15 of 30 lines, at 8 rules it read all of them.
+	if n := strings.Count(extractPrompt, "\n"); n > 24 {
+		t.Errorf("prompt is %d lines; keeping it short is what made the reading step work", n)
 	}
 }

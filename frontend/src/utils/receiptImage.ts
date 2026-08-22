@@ -16,6 +16,10 @@
 // without upscaling, while still cutting a 2.4MB photo to about 1.5MB.
 export const MAX_EDGE = 3200;
 
+// Kept at 0.85: this is the metered hop. Raising it, and even uploading losslessly,
+// was measured against a dim receipt and did not reliably improve extraction --
+// results moved chaotically with tiny pixel differences rather than tracking
+// quality. Not worth ~60% more upload on mobile data.
 export const JPEG_QUALITY = 0.85;
 
 export type NormalizedImage = {

@@ -57,7 +57,10 @@ func FromEnv() Config {
 	// Ollama defaults to ~4096 and truncates silently, which looks like a bad
 	// model rather than a config error. Keep this well clear of the image tokens.
 	ocrNumCtx := envInt("RECEIPT_OCR_NUM_CTX", 32768)
-	ocrTimeout := envDuration("RECEIPT_OCR_TIMEOUT_MS", 120*time.Second)
+	// Extraction transcribes the receipt before structuring it, which roughly
+	// doubles the output tokens: a 14-item restaurant check measured ~60s against
+	// ~25s for a 4-item one. 120s left no headroom for a long grocery receipt.
+	ocrTimeout := envDuration("RECEIPT_OCR_TIMEOUT_MS", 240*time.Second)
 	// Bounds the long edge. A receipt usually fills only part of the frame, so a
 	// 1600px long edge leaves its print too small to read reliably; 2048 is the
 	// cheapest bound that still reads, since 2048 and native hit the same

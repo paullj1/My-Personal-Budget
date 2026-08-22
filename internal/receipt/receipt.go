@@ -16,16 +16,21 @@ import (
 // Extraction mirrors the JSON schema handed to the vision model. Pointers mark
 // fields the model is expected to leave null rather than guess.
 type Extraction struct {
-	Merchant    *string     `json:"merchant"`
-	PurchasedAt *string     `json:"purchased_at"`
-	Currency    *string     `json:"currency"`
-	Items       []ExItem    `json:"items"`
-	Adjustments []ExAdjust  `json:"adjustments"`
-	TaxLines    []ExTaxLine `json:"tax_lines"`
-	Subtotal    *float64    `json:"subtotal"`
-	Total       *float64    `json:"total"`
-	TaxEvidence string      `json:"tax_evidence"`
-	Notes       []string    `json:"notes,omitempty"`
+	// Transcription is the model's verbatim read, if it offers one. The schema no
+	// longer asks for it (see extractSchema), but keeping the field means a model
+	// or prompt that does supply it feeds the diagnostic logged on a failed
+	// reconciliation.
+	Transcription string      `json:"transcription"`
+	Merchant      *string     `json:"merchant"`
+	PurchasedAt   *string     `json:"purchased_at"`
+	Currency      *string     `json:"currency"`
+	Items         []ExItem    `json:"items"`
+	Adjustments   []ExAdjust  `json:"adjustments"`
+	TaxLines      []ExTaxLine `json:"tax_lines"`
+	Subtotal      *float64    `json:"subtotal"`
+	Total         *float64    `json:"total"`
+	TaxEvidence   string      `json:"tax_evidence"`
+	Notes         []string    `json:"notes,omitempty"`
 }
 
 type ExItem struct {

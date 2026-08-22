@@ -17,7 +17,30 @@ const baseTolerance = 2
 // The guarantee: sum(line.TotalCents) == sum(items) + tax + adjustments,
 // exactly, with no cent lost to rounding. Whether that equals the printed total
 // is a separate question, answered by Reconciliation.
+//
+// When the result does not reconcile, the adjustments are retried as though they
+// were absent. Models reliably mistake a savings summary for a discount -- a
+// Target receipt's "YOUR TOTAL SAVINGS THIS TRIP: $20.00" arrives as a +$20
+// adjustment even when the prompt names that exact line -- and the printed total
+// settles it: if dropping them makes the arithmetic work, they were never part of
+// the total. Reconciliation is used as evidence rather than only as a verdict.
 func Allocate(ex Extraction) Allocation {
+	alloc := allocateOnce(ex)
+	if alloc.Reconciliation.OK || len(ex.Adjustments) == 0 {
+		return alloc
+	}
+	stripped := ex
+	stripped.Adjustments = nil
+	if alt := allocateOnce(stripped); alt.Reconciliation.OK {
+		alt.Notes = append(alt.Notes, fmt.Sprintf(
+			"ignored %d adjustment line(s): including them did not match the printed total of %s",
+			len(ex.Adjustments), money(alt.TotalCents)))
+		return alt
+	}
+	return alloc
+}
+
+func allocateOnce(ex Extraction) Allocation {
 	lines := make([]Line, 0, len(ex.Items))
 	for i, it := range ex.Items {
 		pos := it.Position

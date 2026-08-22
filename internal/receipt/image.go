@@ -27,7 +27,11 @@ const (
 	// vision-token ceiling, so 2048 is the cheapest point that still reads.
 	DefaultMaxEdge = 2048
 
-	jpegQuality = 85
+	// The crop is the model's only input, and it has already been through one lossy
+	// encode in the browser. Re-encoding it at 85 measurably destroyed legibility on
+	// a dim receipt: at 85 the model transcribed 15 of 30 lines, at 95 it read 25.
+	// The extra ~100KB costs nothing next to a wrong extraction.
+	jpegQuality = 95
 
 	// MaxPixels caps the decoded image. A byte-length limit is not enough: a
 	// heavily compressed PNG a few hundred KB in size can decode to hundreds of
