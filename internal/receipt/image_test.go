@@ -56,6 +56,8 @@ func TestNormalizePreservesOrientation(t *testing.T) {
 	}
 }
 
+// These fixtures contain no document, so detection declines and the uncropped
+// bound applies. The tighter maxEdge is for crops, where the background is gone.
 func TestNormalizeBoundsTheLongEdge(t *testing.T) {
 	cases := []struct{ w, h, maxEdge int }{
 		{4032, 3024, 1600},
@@ -69,13 +71,18 @@ func TestNormalizeBoundsTheLongEdge(t *testing.T) {
 			t.Fatalf("Normalize(%dx%d): %v", tc.w, tc.h, err)
 		}
 		long := max(info.Width, info.Height)
-		if long > tc.maxEdge {
-			t.Errorf("%dx%d -> %dx%d exceeds maxEdge %d", tc.w, tc.h, info.Width, info.Height, tc.maxEdge)
+		bound := max(tc.maxEdge, UncroppedMaxEdge)
+		if info.Cropped {
+			bound = tc.maxEdge
+		}
+		if long > bound {
+			t.Errorf("%dx%d -> %dx%d exceeds bound %d (cropped=%v)",
+				tc.w, tc.h, info.Width, info.Height, bound, info.Cropped)
 		}
 		// Guard the bug that pinned width instead of the long edge, silently
 		// upscaling portrait sources.
 		srcLong := max(tc.w, tc.h)
-		if srcLong <= tc.maxEdge && long > srcLong {
+		if long > srcLong {
 			t.Errorf("%dx%d was upscaled to %dx%d", tc.w, tc.h, info.Width, info.Height)
 		}
 	}
@@ -271,5 +278,49 @@ func TestNormalizeAcceptsPhoneSizedImages(t *testing.T) {
 	}
 	if info.Width == 0 {
 		t.Error("expected a normalized image")
+	}
+}
+
+// When detection declines, the background is still in the frame, so discarding
+// resolution as well leaves the print too small: a Lowe's receipt on brushed
+// steel -- where paper and surface merge under a brightness threshold -- read
+// nothing at 1536x2048 and read its totals correctly at native 3024x4032.
+func TestNormalizeKeepsResolutionWhenNothingWasCropped(t *testing.T) {
+	// Speckle has no document-shaped region, so detection declines.
+	out, info, err := Normalize(pngOf(3024, 4032), 2048)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if info.Cropped {
+		t.Fatal("expected no crop on an image with no document in it")
+	}
+	if long := max(info.Width, info.Height); long <= 2048 {
+		t.Errorf("uncropped image was reduced to %dx%d; the detail is all it has",
+			info.Width, info.Height)
+	}
+	if long := max(info.Width, info.Height); long > UncroppedMaxEdge {
+		t.Errorf("uncropped image %dx%d exceeds the safety bound %d", info.Width, info.Height, UncroppedMaxEdge)
+	}
+	if len(out) == 0 {
+		t.Error("expected encoded output")
+	}
+}
+
+// A crop removed the background, so the tighter bound still applies there.
+func TestNormalizeStillBoundsACrop(t *testing.T) {
+	img := strip(3000, 2400, 2200, 700, 8)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 92}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	_, info, err := Normalize(buf.Bytes(), 1600)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if !info.Cropped {
+		t.Fatalf("expected a crop: %+v", info.Detect)
+	}
+	if long := max(info.Width, info.Height); long > 1600 {
+		t.Errorf("crop is %dx%d, want the long edge bounded to 1600", info.Width, info.Height)
 	}
 }

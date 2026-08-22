@@ -186,3 +186,58 @@ describe('Dashboard with an empty account', () => {
     );
   });
 });
+
+describe('scan progress', () => {
+  it('shows a progress bar with elapsed and remaining time while scanning', async () => {
+    // A scan that never settles, so the in-flight state can be inspected.
+    let release: (() => void) | undefined;
+    mockedRequest.mockImplementation(((path: string) => {
+      if (path === '/api/v1/') {
+        return Promise.resolve({ features: { receipt_scan: true } });
+      }
+      if (path.includes('/receipts/scan')) {
+        return new Promise(() => {
+          release = () => undefined;
+        });
+      }
+      if (path.includes('/transactions')) {
+        return Promise.resolve({ data: [], meta: { count: 0, offset: 0, nextOffset: 0, hasMore: false } });
+      }
+      if (path.startsWith('/api/v1/budgets')) {
+        return Promise.resolve({
+          data: [{ id: 1, name: 'Groceries', payroll: 0, balance: 0, credits: 0, debits: 0 }],
+          meta: { count: 1 }
+        });
+      }
+      return Promise.resolve({});
+    }) as unknown as typeof request);
+
+    renderDashboard();
+    await openItemizeWizard();
+
+    const library = screen.getByTestId('receipt-library-input') as HTMLInputElement;
+    // A real JPEG header, so normalization gets as far as the request.
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xd9])], 'r.jpg', { type: 'image/jpeg' });
+    fireEvent.change(library, { target: { files: [file] } });
+
+    const bar = await screen.findByRole('progressbar');
+    expect(bar).toBeInTheDocument();
+    expect(bar).toHaveAttribute('max', '1');
+    // An estimate, but a bounded one: never a full bar on an open request.
+    const value = Number((bar as HTMLProgressElement).value);
+    expect(value).toBeGreaterThanOrEqual(0);
+    expect(value).toBeLessThan(1);
+
+    expect(await screen.findByText(/elapsed/i)).toBeInTheDocument();
+    // Cancelling must be possible while it runs.
+    expect(screen.getByRole('button', { name: /cancel scan/i })).toBeInTheDocument();
+    expect(release).toBeUndefined();
+  });
+
+  it('shows no progress bar when idle', async () => {
+    stubApi({ receiptScan: true });
+    renderDashboard();
+    await openItemizeWizard();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+  });
+});

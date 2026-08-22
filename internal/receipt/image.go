@@ -33,6 +33,17 @@ const (
 	// The extra ~100KB costs nothing next to a wrong extraction.
 	jpegQuality = 95
 
+	// UncroppedMaxEdge bounds an image we could not crop.
+	//
+	// The normal bound exists to stop the pixel budget going on background. When
+	// detection declines -- a receipt on a bright surface defeats the brightness
+	// threshold, since paper and brushed steel merge into one region -- the
+	// background is still there, so throwing away resolution as well leaves the
+	// print too small to read: a Lowe's receipt extracted nothing at 1536x2048 and
+	// read correctly at its native 3024x4032. Vision tokens plateau around 4k
+	// regardless, so the larger bound costs prefill time rather than tokens.
+	UncroppedMaxEdge = 4096
+
 	// MaxPixels caps the decoded image. A byte-length limit is not enough: a
 	// heavily compressed PNG a few hundred KB in size can decode to hundreds of
 	// millions of pixels and exhaust memory. 60M covers any phone camera
@@ -118,9 +129,13 @@ func Normalize(data []byte, maxEdge int) ([]byte, NormalizeInfo, error) {
 	}
 
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
-	if !info.Cropped && (w > maxEdge || h > maxEdge) {
-		img = downscale(img, maxEdge)
-		info.Downscaled = true
+	if !info.Cropped {
+		// Nothing was cropped away, so keep the detail instead.
+		bound := max(maxEdge, UncroppedMaxEdge)
+		if w > bound || h > bound {
+			img = downscale(img, bound)
+			info.Downscaled = true
+		}
 	}
 
 	info.Width = img.Bounds().Dx()

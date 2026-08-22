@@ -10,6 +10,13 @@ import {
 import { request } from '../api/client';
 import { normalizeReceiptImage } from '../utils/receiptImage';
 import {
+  DEFAULT_ESTIMATE_MS,
+  estimateMs,
+  progressFraction,
+  progressLabel,
+  recordSample
+} from '../utils/scanProgress';
+import {
   ItemizedLine,
   buildReceiptCommit,
   fromCents,
@@ -183,6 +190,8 @@ const Dashboard = () => {
   const [itemizedLines, setItemizedLines] = useState<ItemizedLine[]>([newLine()]);
   const [receiptDate, setReceiptDate] = useState('');
   const [scanning, setScanning] = useState(false);
+  const [scanElapsedMs, setScanElapsedMs] = useState(0);
+  const [scanEstimateMs, setScanEstimateMs] = useState(DEFAULT_ESTIMATE_MS);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanMeta, setScanMeta] = useState<{
     reconciliation: Reconciliation;
@@ -208,6 +217,16 @@ const Dashboard = () => {
     window.addEventListener('open-new-budget', handler);
     return () => window.removeEventListener('open-new-budget', handler);
   }, []);
+  // The scan is one synchronous request with nothing to report progress, so the
+  // bar runs off a local clock against a learned estimate. Ticking four times a
+  // second is smooth enough to read and cheap.
+  useEffect(() => {
+    if (!scanning) return;
+    const startedAt = Date.now();
+    setScanElapsedMs(0);
+    const id = window.setInterval(() => setScanElapsedMs(Date.now() - startedAt), 250);
+    return () => window.clearInterval(id);
+  }, [scanning]);
   useEffect(() => {
     document.body.classList.toggle('modal-open', modalOpen);
     document.documentElement.classList.toggle('modal-open', modalOpen);
@@ -723,7 +742,9 @@ const Dashboard = () => {
     setReceiptTotal(0);
     setReceiptDate('');
     setItemizedLines([newLine()]);
+    setScanEstimateMs(estimateMs());
     setScanning(true);
+    const startedAt = Date.now();
     const controller = new AbortController();
     scanAbort.current = controller;
     try {
@@ -761,6 +782,9 @@ const Dashboard = () => {
         taxCents: scan.tax_cents,
         elapsedMs: scan.elapsed_ms
       });
+      // Record the wall clock the user actually waited -- upload and image work
+      // included -- since that is what the bar has to predict next time.
+      recordSample(Date.now() - startedAt);
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
         return;
@@ -1187,8 +1211,19 @@ const Dashboard = () => {
             ) : (
               <>
                 {scanning && (
-                  <div className="badge" style={{ marginBottom: 12 }}>
-                    Reading the receipt… this usually takes under a minute.
+                  <div className="panel" style={{ marginBottom: 12, padding: 12 }}>
+                    <p className="eyebrow" style={{ marginTop: 0 }}>
+                      Reading the receipt
+                    </p>
+                    <progress
+                      value={progressFraction(scanElapsedMs, scanEstimateMs)}
+                      max={1}
+                      aria-label="Receipt scan progress"
+                      style={{ width: '100%' }}
+                    />
+                    <p className="muted" style={{ marginBottom: 0 }} aria-live="polite">
+                      {progressLabel(scanElapsedMs, scanEstimateMs)}
+                    </p>
                   </div>
                 )}
                 {scanError && (
