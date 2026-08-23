@@ -63,3 +63,20 @@ func TestFromEnv_Defaults(t *testing.T) {
 		t.Fatalf("expected defaults for relying party")
 	}
 }
+
+func TestMemoryLimitDefaultAndOverride(t *testing.T) {
+	t.Setenv("MEMORY_LIMIT_BYTES", "")
+	if got := FromEnv().MemoryLimitBytes; got != 256<<20 {
+		t.Errorf("default memory limit = %d, want %d", got, 256<<20)
+	}
+	t.Setenv("MEMORY_LIMIT_BYTES", "134217728")
+	if got := FromEnv().MemoryLimitBytes; got != 134217728 {
+		t.Errorf("override = %d, want 134217728", got)
+	}
+	// Zero must disable rather than clamp, so an operator can opt out on a host
+	// where the default is wrong.
+	t.Setenv("MEMORY_LIMIT_BYTES", "0")
+	if got := FromEnv().MemoryLimitBytes; got != 0 {
+		t.Errorf("0 should disable the limit, got %d", got)
+	}
+}

@@ -496,6 +496,72 @@ Select the backend with `RECEIPT_OCR_API` (`llamacpp` by default, `ollama` still
 supported and tested). The two clients share one prompt and one schema, asserted by a
 test, so a change to either cannot silently apply to only one backend.
 
+### 3.9 Memory bounds — what OOM-killed the API
+
+On 2026-08-22 the API was OOM-killed twice, minutes after three scans:
+
+```
+13:05:26  Out of memory: Killed process 1712142 (api)
+          total-vm:1630448kB  anon-rss:303160kB
+13:08:26  dockerd invoked oom-killer   global_oom
+```
+
+It was not a leak. Five sequential scans allocate an identical 162MB each and
+settle back to the same 36MB heap; nothing accumulates. It was an unbounded
+per-request spike on a 917MiB host with no swap — and because the Swarm service
+had no memory limit, the kernel fired a *global* OOM, so one scan endangered
+Postgres, Caddy and everything else on the box.
+
+Two things drive the spike, and they are not the same thing.
+
+**Pixel count.** The pipeline holds several full-frame buffers: the decode, plus
+RGBA copies at 4 bytes per pixel for the rotate and downscale steps. Measured
+allocation per scan:
+
+| input | allocated | peak RSS |
+|---|---|---|
+| 3200x2400 (8MP, what the browser sends) | 82MB | 50MB |
+| 4032x3024 (12MP, native iPhone) | 162MB | 74MB |
+| 8000x6000 (48MP) | 955MB | — |
+| 8600x6900 (59MP, the old `MaxPixels`) | 1086MB | — |
+
+The old limit of 60M pixels was chosen to accommodate a 48MP sensor, which simply
+cannot be honoured at native resolution on a 1GB host. `MaxPixels` is now 16M.
+
+**The resampler, which is a cliff rather than a slope.** Above `UncroppedMaxEdge`
+the uncropped path calls `downscale`, and x/image's Catmull-Rom allocates a
+separable-pass scratch buffer of `dst_width x src_height x 4` float64s — roughly
+32 bytes per *source* pixel. Peak RSS therefore jumps from 74MB at 4032x3024 to
+**559MB at 4618x3464**: the same order of megapixels, either side of the point the
+resampler engages.
+
+Two consequences worth recording:
+
+- **Lowering `MaxPixels` cannot fix this**, because the scratch scales with
+  whatever the limit allows (~`MaxPixels` x 32 bytes).
+- **`GOMEMLIMIT` barely helps** — 559MB became 507MB. The scratch is *live* while
+  the resample runs, and a soft limit can only collect garbage, not shrink live
+  data. It is still set, because it does help the ordinary allocation churn, but it
+  is not the mechanism that bounds the worst case.
+
+What bounds it is refusing to enter the expensive path: `MaxLongEdge` caps the
+source's long edge at 4096. That costs nothing real, since 4096 is already the most
+this pipeline keeps on the long edge, the browser re-encodes to 3200 before upload,
+and a native 12MP photo is 4032. Only an unusually elongated original — a panorama,
+or a direct caller's 8000x2000 — is refused, with a 413 naming the guard.
+
+Both guards are checked from the header via `DecodeConfig`, before any pixels are
+allocated. With both in place the worst case admitted is **96MB peak RSS**, down
+from 1086MB.
+
+The service also now carries a hard memory limit, so that if this analysis is
+wrong somewhere, the container dies alone instead of taking the host with it.
+
+A note on metrics: `runtime.MemStats.Sys` reports reserved virtual address space,
+not resident memory, and reads far higher than what the OOM killer accounts for
+(983MB `Sys` against a 96MB RSS). The numbers above are `VmHWM` from
+`/proc/self/status`.
+
 ## 4. Tax allocation (server-side, deterministic)
 
 All allocation happens in **integer cents**. Floats are converted at the boundary and
@@ -759,6 +825,27 @@ aborts via `AbortController`.
 | Oversize image | `413`; client downscale should make this unreachable |
 | Partial commit | Impossible — single DB transaction (D12) |
 | `RECEIPT_OCR_URL` unset | Scan button hidden; manual itemize behaves exactly as today |
+| Host runs out of memory | Guarded at the header (3.9); service carries a hard memory limit so the container dies alone |
+| **Extraction wrong but balanced** | **Not detected.** See below |
+
+Reconciliation checks arithmetic, not completeness. A single line equal to the
+printed subtotal satisfies both checks — items match the subtotal, and items plus
+tax match the total — so an extraction that collapsed a six-item receipt into one
+bogus line is reported as verified. This is the failure mode llama.cpp's chat
+template fixed in practice (3.8), not one the validator can catch.
+
+Since only reconciliation *failures* were logged, such a scan also left no trace at
+all. When a production scan was reported as wrong there was no record of how many
+items came back, which is the first thing worth knowing. Every scan now logs one
+line with its item count and the geometry that produced it:
+
+```
+receipt scan ok in 31s: items=4 image=737x2048 cropped=true items_sum=70.66 \
+  subtotal=70.66 tax=4.24 total=74.90 evidence=rate basis=marked merchant="Target"
+```
+
+Rejecting a suspiciously small item count outright is a candidate follow-up; it
+needs a threshold that does not reject the many legitimate single-line receipts.
 
 ## 10. Configuration
 
@@ -770,10 +857,11 @@ RECEIPT_OCR_URL=            # inference base URL, e.g. http://10.0.10.10:11435
 RECEIPT_OCR_API=llamacpp    # llamacpp (default) or ollama
 RECEIPT_OCR_MODEL=qwen3.8-27b   # llama-server --alias; "qwen3.8:27b" on ollama
 RECEIPT_OCR_TOKEN=          # bearer token, if fronted by a reverse proxy
-RECEIPT_OCR_TIMEOUT_MS=60000
+RECEIPT_OCR_TIMEOUT_MS=240000
 RECEIPT_OCR_NUM_CTX=32768   # MUST be set high: Ollama truncates silently at ~4096
-RECEIPT_OCR_MAX_EDGE=1600   # LONG edge. Measured floor -- 1200 misreads prices
-RECEIPT_MAX_IMAGE_BYTES=8388608
+RECEIPT_MAX_EDGE=2048       # LONG edge. Measured floor -- 1200 misreads prices
+RECEIPT_MAX_IMAGE_BYTES=16777216
+MEMORY_LIMIT_BYTES=268435456    # Go soft memory limit; 0 disables. See 3.9
 ```
 
 Exposed to the frontend as a capability flag on an existing response (or a small

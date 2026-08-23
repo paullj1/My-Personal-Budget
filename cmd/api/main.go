@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -18,6 +19,23 @@ import (
 
 func main() {
 	cfg := config.FromEnv()
+
+	// Bound the heap before serving anything. Receipt scanning allocates in large
+	// transient bursts -- an image costs roughly 13MB per megapixel across decode
+	// and the full-frame RGBA copies -- and on a 1GB host shared with Postgres and
+	// Caddy that burst is what ends the process. Under a soft limit the collector
+	// runs harder as the ceiling approaches instead of growing into an OOM kill.
+	//
+	// GOMEMLIMIT, if set, is the runtime's own knob and already applied, so leave it
+	// alone rather than overriding what an operator asked for.
+	if cfg.MemoryLimitBytes > 0 && os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(cfg.MemoryLimitBytes)
+		log.Printf("Go memory limit: %dMB (soft)", cfg.MemoryLimitBytes>>20)
+	} else if limit := os.Getenv("GOMEMLIMIT"); limit != "" {
+		log.Printf("Go memory limit: GOMEMLIMIT=%s (set by the environment)", limit)
+	} else {
+		log.Printf("Go memory limit: none -- a large scan can grow until the kernel intervenes")
+	}
 
 	db, err := database.Connect(cfg.DBURL, cfg.DBConnectRetries, cfg.DBConnectInterval)
 	if err != nil {

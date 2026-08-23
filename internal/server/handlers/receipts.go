@@ -146,14 +146,7 @@ func (h *APIHandler) scanReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	alloc := receipt.Allocate(extraction)
-	if !alloc.Reconciliation.OK {
-		// The transcription is what the model actually read, so it is the one thing
-		// worth having when an extraction does not add up.
-		log.Printf("receipt scan did not reconcile (%s); model read %d lines: %q",
-			alloc.Reconciliation.Message,
-			len(strings.Split(strings.TrimSpace(extraction.Transcription), "\n")),
-			extraction.Transcription)
-	}
+	logScanOutcome(alloc, extraction, info, elapsed)
 
 	keys := make([]string, 0, len(alloc.Lines))
 	for _, l := range alloc.Lines {
@@ -420,4 +413,68 @@ func plausibleReceiptDate(t *time.Time, now time.Time) *time.Time {
 		return nil
 	}
 	return t
+}
+
+// logScanOutcome records one line for every scan, successful or not.
+//
+// Logging only failures left a real blind spot. Reconciliation checks arithmetic,
+// not completeness: a single line equal to the printed subtotal balances perfectly,
+// so an extraction that collapsed a six-item receipt into one bogus line passes and
+// says nothing. When a scan was reported as wrong in production there was no record
+// of how many items came back, which is the first thing worth knowing.
+//
+// One line, always, greppable: item count and the geometry that produced it, since
+// whether the crop succeeded is the strongest predictor of extraction quality.
+func logScanOutcome(alloc receipt.Allocation, ex receipt.Extraction, info receipt.NormalizeInfo, elapsed time.Duration) {
+	outcome := "ok"
+	if !alloc.Reconciliation.OK {
+		outcome = "MISMATCH"
+	}
+	merchant := alloc.Merchant
+	if merchant == "" {
+		merchant = "?"
+	}
+
+	log.Printf("receipt scan %s in %s: items=%d image=%dx%d cropped=%v "+
+		"items_sum=%s subtotal=%s tax=%s total=%s evidence=%s basis=%s merchant=%q%s",
+		outcome, elapsed.Round(time.Millisecond), len(ex.Items),
+		info.Width, info.Height, info.Cropped,
+		centsString(alloc.Reconciliation.ItemsSumCents), centsString(alloc.SubtotalCents),
+		centsString(alloc.TaxCents), centsString(alloc.TotalCents),
+		alloc.TaxEvidence, alloc.TaxBasis, merchant,
+		reconcileDetail(alloc, info, ex))
+}
+
+// reconcileDetail appends why a scan did not add up, and the things worth having
+// when it did not: the detector's reasoning, and any transcription the model
+// volunteered. The schema no longer asks for one, so this is usually empty --
+// the previous version printed `1 lines: ""` on every failure, which read like
+// information and was not.
+func reconcileDetail(alloc receipt.Allocation, info receipt.NormalizeInfo, ex receipt.Extraction) string {
+	if alloc.Reconciliation.OK {
+		return ""
+	}
+	detail := fmt.Sprintf(" | %s items_delta=%s total_delta=%s",
+		alloc.Reconciliation.Message,
+		centsString(alloc.Reconciliation.ItemsDeltaCents),
+		centsString(alloc.Reconciliation.TotalDeltaCents))
+	if !info.Cropped && info.Detect.Reason != "" {
+		// An uncropped frame spends most of its pixels on background, which is the
+		// usual reason a scan reads badly.
+		detail += fmt.Sprintf(" detect=%q", info.Detect.Reason)
+	}
+	if t := strings.TrimSpace(ex.Transcription); t != "" {
+		detail += fmt.Sprintf(" transcription=%q", t)
+	}
+	return detail
+}
+
+// centsString renders integer cents for logs. Money is held in cents throughout,
+// so formatting it as a float anywhere risks that habit leaking into arithmetic.
+func centsString(cents int) string {
+	sign := ""
+	if cents < 0 {
+		sign, cents = "-", -cents
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
 }

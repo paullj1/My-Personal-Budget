@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"strings"
 	"testing"
 )
 
@@ -29,6 +30,19 @@ func pngOf(w, h int) []byte {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		panic(err)
+	}
+	return buf.Bytes()
+}
+
+// pngDeclaring builds a PNG of the given dimensions as cheaply as possible: one
+// byte per pixel, uniform, so it compresses to almost nothing and encodes fast.
+// For tests of the header-size guard, which never decodes the pixels -- pngOf's
+// per-pixel RGBA speckle would allocate 192MB to test a 48MP rejection.
+func pngDeclaring(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, w, h))); err != nil {
+		t.Skipf("could not build a %dx%d fixture: %v", w, h, err)
 	}
 	return buf.Bytes()
 }
@@ -268,9 +282,15 @@ func TestNormalizeRejectsDecompressionBomb(t *testing.T) {
 }
 
 func TestNormalizeAcceptsPhoneSizedImages(t *testing.T) {
-	// A 48MP phone sensor must stay under the limit.
-	if int64(8000)*6000 > MaxPixels {
-		t.Errorf("MaxPixels %d rejects a 48MP phone photo", MaxPixels)
+	// What the app actually sends: the browser re-encodes to a 3200px long edge
+	// before upload. This is the size that must never be refused.
+	if int64(2400)*3200 > MaxPixels {
+		t.Errorf("MaxPixels %d rejects a browser-normalized upload", MaxPixels)
+	}
+	// And a native 12MP phone photo, which is what a direct API caller or the smoke
+	// script posts.
+	if int64(4032)*3024 > MaxPixels {
+		t.Errorf("MaxPixels %d rejects a native 12MP phone photo", MaxPixels)
 	}
 	_, info, err := Normalize(pngOf(1200, 900), DefaultMaxEdge)
 	if err != nil {
@@ -278,6 +298,67 @@ func TestNormalizeAcceptsPhoneSizedImages(t *testing.T) {
 	}
 	if info.Width == 0 {
 		t.Error("expected a normalized image")
+	}
+}
+
+// A pixel-count limit does not bound the resampler. Above UncroppedMaxEdge the
+// uncropped path engages Catmull-Rom, whose separable-pass scratch is about 32
+// bytes per source pixel: measured peak RSS was 74MB at 4032x3024 but 559MB at
+// 4618x3464, which is the same number of megapixels either side of the cliff. A
+// soft memory limit does not help, because that scratch is live rather than
+// collectable. Refusing the long edge keeps the expensive path unreachable.
+func TestNormalizeRefusesOverlyLongEdges(t *testing.T) {
+	// 16MP, inside MaxPixels, but elongated enough to trigger the resampler.
+	_, _, err := Normalize(pngDeclaring(t, 4618, 3464), DefaultMaxEdge)
+	if err == nil {
+		t.Fatal("expected a 4618px long edge to be refused")
+	}
+	if !errors.Is(err, ErrImageTooLarge) {
+		t.Errorf("should wrap ErrImageTooLarge so the handler answers 413, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "long edge") {
+		t.Errorf("error should say which guard rejected it: %v", err)
+	}
+	// The two guards are independent; neither implies the other.
+	if int64(4618)*3464 > MaxPixels {
+		t.Error("fixture should be inside MaxPixels, or it tests the wrong guard")
+	}
+	// A native 12MP photo sits just under the bound and must still pass.
+	if 4032 > MaxLongEdge {
+		t.Errorf("MaxLongEdge %d rejects a native 12MP phone photo", MaxLongEdge)
+	}
+}
+
+// The limit deliberately refuses originals from a high-megapixel sensor. This is a
+// behaviour change, not an oversight: honouring a 48MP photo at native resolution
+// costs ~955MB of transient allocation, which OOM-killed the API on a 1GB host and,
+// with no container memory limit set, took a global OOM with it. A 413 naming the
+// limit is the better failure. The app is unaffected because the browser resizes
+// first; only a direct caller posting an original sees this.
+func TestNormalizeRefusesHighMegapixelOriginals(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		w, h int
+	}{
+		{"24MP", 5712, 4284},
+		{"48MP", 8000, 6000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A uniform gray PNG, not pngOf's speckle: the guard reads only the
+			// header, so there is no reason to allocate and encode 48M pixels of
+			// incompressible noise to test it.
+			_, _, err := Normalize(pngDeclaring(t, tc.w, tc.h), DefaultMaxEdge)
+			if err == nil {
+				t.Fatalf("expected %s to be refused", tc.name)
+			}
+			if !errors.Is(err, ErrImageTooLarge) {
+				t.Errorf("should wrap ErrImageTooLarge so the handler answers 413, got %v", err)
+			}
+			// The caller can only act on this if the message says what the limit is.
+			if !strings.Contains(err.Error(), "megapixel") {
+				t.Errorf("error should name the limit in megapixels: %v", err)
+			}
+		})
 	}
 }
 

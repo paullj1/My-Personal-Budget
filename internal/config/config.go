@@ -32,6 +32,15 @@ type Config struct {
 	ReceiptOCRTimeout time.Duration
 	ReceiptMaxEdge    int
 	ReceiptMaxBytes   int64
+
+	// MemoryLimitBytes is applied as the Go runtime's soft memory limit. Zero
+	// leaves the runtime unbounded.
+	//
+	// Scanning is by far the most allocation-hungry thing this process does -- a
+	// single image costs tens to hundreds of megabytes transiently -- and on a small
+	// host that spike is what kills it. A soft limit makes the collector work harder
+	// as the process approaches the ceiling instead of growing into an OOM kill.
+	MemoryLimitBytes int64
 }
 
 // ReceiptScanEnabled reports whether an inference endpoint is configured.
@@ -79,6 +88,10 @@ func FromEnv() Config {
 	// vision-token ceiling.
 	maxEdge := envInt("RECEIPT_MAX_EDGE", 2048)
 	maxBytes := int64(envInt("RECEIPT_MAX_IMAGE_BYTES", 16<<20))
+	// Default sized for the 1GB host this runs on, where the API shares memory with
+	// Postgres, Caddy and several other containers. Set GOMEMLIMIT instead to use
+	// the runtime's own variable, or 0 to disable.
+	memLimit := int64(envInt("MEMORY_LIMIT_BYTES", 256<<20))
 
 	return Config{
 		Host:              host,
@@ -100,6 +113,7 @@ func FromEnv() Config {
 		ReceiptOCRTimeout: ocrTimeout,
 		ReceiptMaxEdge:    maxEdge,
 		ReceiptMaxBytes:   maxBytes,
+		MemoryLimitBytes:  memLimit,
 	}
 }
 

@@ -46,9 +46,50 @@ const (
 
 	// MaxPixels caps the decoded image. A byte-length limit is not enough: a
 	// heavily compressed PNG a few hundred KB in size can decode to hundreds of
-	// millions of pixels and exhaust memory. 60M covers any phone camera
-	// (a 48MP sensor is 48M) with room to spare.
-	MaxPixels = 60_000_000
+	// millions of pixels and exhaust memory.
+	//
+	// This is a memory bound, not a taste one, so it is set from measurement. The
+	// pipeline allocates several full-frame buffers -- decode, then RGBA copies at
+	// 4 bytes per pixel for the rotate and downscale steps -- so cost scales with
+	// pixel count at roughly 13MB per megapixel:
+	//
+	//	 8MP (browser upload)     82MB allocated
+	//	12MP (native iPhone)     162MB
+	//	48MP                     955MB
+	//	59MP (the old limit)    1086MB, driving process Sys to 1845MB
+	//
+	// The old 60M limit was chosen to cover a 48MP sensor, which cannot be honoured
+	// at native resolution on a 1GB host: it OOM-killed the API twice in production
+	// on 2026-08-22, and because the container had no memory limit the kernel fired
+	// a global OOM that endangered every other service on the box.
+	//
+	// 16M is ~215MB worst case. It leaves better than 2x headroom over what the app
+	// actually sends, since the browser re-encodes to a 3200px long edge (7.68MP)
+	// before upload, and still accepts a native 12MP phone photo whole. A direct API
+	// caller posting a 24MP or 48MP original is now refused with a 413 naming this
+	// limit, which is the honest answer -- previously it took the host down. Raising
+	// it means downscaling right after decode, before the RGBA copies, rather than
+	// simply moving this number up.
+	MaxPixels = 16_000_000
+
+	// MaxLongEdge caps the source's long edge, and exists because a pixel-count
+	// limit alone does not bound memory.
+	//
+	// Above UncroppedMaxEdge the uncropped path calls downscale, and x/image's
+	// Catmull-Rom resampler allocates a separable-pass scratch buffer of
+	// dst_width x src_height x 4 channels of float64 -- roughly 32 bytes per source
+	// pixel, which at 16MP is over 500MB. Measured peak RSS jumps from 74MB at
+	// 4032x3024 to 559MB at 4618x3464 for exactly this reason, and a soft memory
+	// limit barely dents it (507MB) because the scratch is live, not garbage.
+	//
+	// So the cost is not proportional to pixels; it is a cliff at the point the
+	// resampler engages. Lowering MaxPixels cannot fix that, since the scratch
+	// scales with whatever the limit allows. Refusing to enter the expensive path
+	// can, and costs nothing real: 4096 is already the most this pipeline will keep
+	// on the long edge, the browser re-encodes to 3200 before upload, and a native
+	// 12MP photo is 4032. Only an unusually elongated original -- a panorama, or a
+	// direct caller's 8000x2000 -- is refused, and it gets a 413 saying why.
+	MaxLongEdge = UncroppedMaxEdge
 )
 
 // NormalizeInfo reports what was done, so callers can log or surface it.
@@ -85,6 +126,12 @@ func Normalize(data []byte, maxEdge int) ([]byte, NormalizeInfo, error) {
 	if pixels := int64(cfg.Width) * int64(cfg.Height); pixels > MaxPixels {
 		return nil, NormalizeInfo{}, fmt.Errorf("%w: %dx%d is %d megapixels, limit is %d",
 			ErrImageTooLarge, cfg.Width, cfg.Height, pixels/1_000_000, MaxPixels/1_000_000)
+	}
+	// Both guards are needed: the pixel count bounds the decode, this bounds the
+	// resampler's scratch buffer, and neither implies the other.
+	if long := max(cfg.Width, cfg.Height); long > MaxLongEdge {
+		return nil, NormalizeInfo{}, fmt.Errorf("%w: %dx%d has a %dpx long edge, limit is %d",
+			ErrImageTooLarge, cfg.Width, cfg.Height, long, MaxLongEdge)
 	}
 
 	img, format, err := image.Decode(bytes.NewReader(data))
