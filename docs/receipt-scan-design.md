@@ -285,6 +285,70 @@ connection was torn down before the handler could answer — the client saw an e
 while the server logged a *successful* request. The timeouts now scale off
 `RECEIPT_OCR_TIMEOUT_MS`, with `ReadHeaderTimeout` kept short.
 
+#### Re-measured on llama.cpp with MTP, and the crop floor that followed
+
+The numbers above are from Ollama. Re-measured on llama-server with speculative
+decoding, per receipt, separating the two phases:
+
+| receipt | crop | image tokens | prefill | gen tokens | generation | wall |
+|---|---|---|---|---|---|---|
+| Target | 737x2048 (cropped) | 1853 | 8.5s | 428 | **22.0s** | 30.7s |
+| Lowe's | 3024x4032 (uncropped) | 4396 | 30.2s | 649 | **34.1s** | 64.6s |
+| Brasserie | 764x1191 (cropped) | 1269 | 5.4s | 1068 | **47.5s** | 53.2s |
+
+Generation is 72%, 53% and 90% of wall clock. The earlier conclusion holds and
+strengthens: pixels are not the expensive part, output tokens are. Note also that
+generation volume tracks item count -- 1068 tokens for 14 items against 428 for 4.
+
+This is what made the resolution question worth revisiting, since prefill is cheap
+enough to spend. Two findings, and they point opposite ways.
+
+**Raising `maxEdge` is the wrong lever.** Brasserie's crop is 764x1191 at maxEdge
+2048, 3072 *and* 4096 -- identical, because the photo is only 1080x1920 and the
+receipt occupies that much of it. The cap was never the constraint; the source was
+exhausted. Meanwhile Target *is* cap-bound (737x2048 -> 1475x4096), and raising it
+there cost **+16s (31s -> 47s) for a byte-identical answer**, since that receipt
+already read correctly. A global increase taxes the receipts that do not need it and
+does nothing for the one that does.
+
+**Upscaling a small crop is the right lever.** Upscaling adds no information, which
+is why it is not done in general. It helps anyway when the crop is small, because the
+vision encoder tiles into fixed-size patches: below some size a digit stops spanning
+enough patches to resolve, so detail present in the crop is lost at the encoder
+rather than in the optics. On Brasserie:
+
+| scale | crop | wall | Hot Chips (printed 16.00) | result |
+|---|---|---|---|---|
+| 1.0x | 764x1191 | 53s | read `15.00` | items 420.00 vs subtotal 421.00 |
+| **1.5x** | 1146x1786 | **59s** | read `16.00` | **reconciles** |
+| 2.0x | 1528x2382 | 75s | read `16.00` | reconciles |
+| 3.0x | 2292x3572 | 79s | read `16.00` | reconciles |
+
+The gain arrives by 1.5x and nothing beyond it helps, which is the signature of a
+sampling floor rather than a lucky reroll.
+
+So `MinCropEdge = 1800` is a **floor, not a target**: a crop already at or above it
+is untouched, and it is applied inside `extractRect`'s existing affine resample, so
+there is one interpolation pass rather than two. `maxEdge` still bounds it, and
+`maxCropUpscale = 2.0` caps the factor -- an unusually small crop is more often a bad
+detection than a small receipt, and blowing that up would spend prefill on a blurred
+mistake.
+
+End to end, all three now reconcile, and the two that already worked pay nothing:
+
+| receipt | before | after |
+|---|---|---|
+| Target | 737x2048, 30s, reconciles | unchanged |
+| Lowe's | 3024x4032, 65s, reconciles | unchanged |
+| Brasserie | 764x1191, 53s, **off by $1.00** | **1155x1800, 59s, reconciles** |
+
+Caveat: this is one receipt's worth of evidence for the fix. It is known not to
+regress the other two only because the floor does not fire on them. Whether
+interpolation ever *hurts* a receipt is untested, and the risk is bounded only by the
+rule firing solely on small crops -- which are already the worst-performing class.
+The real fix for such an image remains a sharper photograph, which the app cannot
+control.
+
 ### 3.7 Why not a smaller model
 
 Tested on the same photo and geometry. Memory is not the constraint — 17.7GB of 128GB —

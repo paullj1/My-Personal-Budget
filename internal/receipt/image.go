@@ -72,6 +72,19 @@ const (
 	// simply moving this number up.
 	MaxPixels = 16_000_000
 
+	// MinCropEdge is the long edge a crop is lifted to when the source could not
+	// supply it. See extractRect for the measurements behind the value; 1800 is the
+	// smallest size that read a marginal digit correctly, and going higher bought
+	// nothing but prefill time.
+	//
+	// This is a floor, not a target: a crop already at or above it is left alone, so
+	// receipts that read correctly today pay nothing.
+	MinCropEdge = 1800
+
+	// maxCropUpscale bounds the interpolation factor, so a tiny crop -- usually a
+	// bad detection rather than a small receipt -- cannot be blown up arbitrarily.
+	maxCropUpscale = 2.0
+
 	// MaxLongEdge caps the source's long edge, and exists because a pixel-count
 	// limit alone does not bound memory.
 	//
@@ -370,7 +383,36 @@ func extractRect(src image.Image, rect rotRect, maxEdge int) (image.Image, error
 		return nil, fmt.Errorf("degenerate crop rectangle")
 	}
 
-	scale := math.Min(1, float64(maxEdge)/rect.Long)
+	// Output long edge: bounded above by maxEdge as always, but lifted to
+	// MinCropEdge when the photograph could not supply that much.
+	//
+	// Upscaling adds no information, which is why this is not done in general. It
+	// helps anyway when the crop is small, because the vision encoder tiles the
+	// image into fixed-size patches: below some size a digit stops spanning enough
+	// patches to be resolved, and detail that is present in the crop is lost at the
+	// encoder rather than in the optics. Measured on a receipt photographed at
+	// 1080x1920, whose crop is only 764x1191 and cannot be improved by raising
+	// maxEdge because the source is exhausted:
+	//
+	//	1.0x  764x1191   53s   read 15.00 for a printed 16.00  -- did not reconcile
+	//	1.5x 1146x1786   59s   read 16.00                       -- reconciled
+	//	2.0x 1528x2382   75s   read 16.00
+	//	3.0x 2292x3572   79s   read 16.00
+	//
+	// The gain arrives by 1.5x and nothing beyond it helps, which is what a sampling
+	// floor looks like rather than a lucky reroll. Raising maxEdge instead would be
+	// the wrong lever: it does nothing here, and on a receipt that is already legible
+	// it cost 16 seconds for an identical answer.
+	long := rect.Long
+	if long < MinCropEdge {
+		// Cap the factor as well as the target. There is no evidence of gain past
+		// ~1.5x, and an unusually small crop is more likely a poor detection than a
+		// tiny receipt -- upscaling it hard would spend prefill on a blurred mistake.
+		long = math.Min(MinCropEdge, rect.Long*maxCropUpscale)
+	}
+	long = math.Min(long, float64(maxEdge))
+
+	scale := long / rect.Long
 	outW := max(1, int(rect.Short*scale))
 	outH := max(1, int(rect.Long*scale))
 

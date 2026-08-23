@@ -405,3 +405,101 @@ func TestNormalizeStillBoundsACrop(t *testing.T) {
 		t.Errorf("crop is %dx%d, want the long edge bounded to 1600", info.Width, info.Height)
 	}
 }
+
+// A crop the source could not supply at a legible size is lifted to MinCropEdge.
+//
+// Upscaling adds no information, so this exists only because the vision encoder
+// tiles into fixed patches: a receipt photographed at 1080x1920 crops to 764x1191
+// and misread a printed 16.00 as 15.00, which 1.5x fixed for 6 seconds. Raising
+// maxEdge cannot help such an image -- the source is exhausted.
+func TestExtractRectLiftsSmallCrops(t *testing.T) {
+	// Long axis vertical, so U points down and V across.
+	small := rotRect{
+		Center: point{X: 400, Y: 600},
+		U:      point{X: 0, Y: 1},
+		V:      point{X: 1, Y: 0},
+		Long:   1191,
+		Short:  764,
+	}
+	src := image.NewRGBA(image.Rect(0, 0, 1080, 1920))
+	out, err := extractRect(src, small, 2048)
+	if err != nil {
+		t.Fatalf("extractRect: %v", err)
+	}
+	got := out.Bounds().Dy()
+	if got != MinCropEdge {
+		t.Errorf("small crop long edge = %d, want it lifted to %d", got, MinCropEdge)
+	}
+	// Aspect ratio must survive the lift.
+	wantRatio := small.Short / small.Long
+	gotRatio := float64(out.Bounds().Dx()) / float64(out.Bounds().Dy())
+	if diff := gotRatio - wantRatio; diff > 0.01 || diff < -0.01 {
+		t.Errorf("aspect drifted: %.4f vs %.4f", gotRatio, wantRatio)
+	}
+}
+
+// A crop that is already legible pays nothing: no upscale, no extra prefill.
+func TestExtractRectLeavesAdequateCropsAlone(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 4032, 3024))
+	for _, long := range []float64{MinCropEdge, MinCropEdge + 200, 2048} {
+		rect := rotRect{
+			Center: point{X: 2000, Y: 1500},
+			U:      point{X: 0, Y: 1},
+			V:      point{X: 1, Y: 0},
+			Long:   long,
+			Short:  long / 2.7,
+		}
+		out, err := extractRect(src, rect, 2048)
+		if err != nil {
+			t.Fatalf("extractRect(%v): %v", long, err)
+		}
+		if got := out.Bounds().Dy(); float64(got) > long+1 {
+			t.Errorf("crop of %v was upscaled to %d; adequate crops must be untouched", long, got)
+		}
+	}
+}
+
+// maxEdge still wins. It is the operator's bound, so the floor must not push past
+// it even when the crop is small.
+func TestExtractRectFloorNeverExceedsMaxEdge(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 1080, 1920))
+	rect := rotRect{
+		Center: point{X: 400, Y: 600},
+		U:      point{X: 0, Y: 1},
+		V:      point{X: 1, Y: 0},
+		Long:   1191,
+		Short:  764,
+	}
+	const tight = 1400
+	out, err := extractRect(src, rect, tight)
+	if err != nil {
+		t.Fatalf("extractRect: %v", err)
+	}
+	if got := out.Bounds().Dy(); got > tight {
+		t.Errorf("long edge = %d, must not exceed maxEdge %d", got, tight)
+	}
+}
+
+// A very small crop is more often a bad detection than a small receipt, so the
+// interpolation factor is capped rather than blowing it up to the floor.
+func TestExtractRectCapsTheUpscaleFactor(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 1080, 1920))
+	rect := rotRect{
+		Center: point{X: 400, Y: 600},
+		U:      point{X: 0, Y: 1},
+		V:      point{X: 1, Y: 0},
+		Long:   300,
+		Short:  120,
+	}
+	out, err := extractRect(src, rect, 2048)
+	if err != nil {
+		t.Fatalf("extractRect: %v", err)
+	}
+	got := float64(out.Bounds().Dy())
+	if limit := rect.Long * maxCropUpscale; got > limit+1 {
+		t.Errorf("long edge = %.0f, exceeds the %.1fx cap (%.0f)", got, maxCropUpscale, limit)
+	}
+	if got >= MinCropEdge {
+		t.Errorf("a 300px crop reached the floor at %.0f; the factor cap should bind first", got)
+	}
+}
