@@ -439,12 +439,52 @@ silent, and that is what makes it unacceptable.
 rather than mitigating it. Six alternating requests with no flushing showed no
 leakage.
 
-**The cost is speed.** Generation is ~12 tok/s against Ollama's ~19, so a scan takes
-45-95s rather than 22-40s. Flash attention on/off and context size 32k vs 128k make
-no measurable difference, so the gap is Ollama using MTP speculative decoding, which
-llama.cpp cannot do for this model without a separate draft model. Correct extraction
-at 95s beats a wrong one at 30s, and reconciliation cannot rescue a confidently wrong
-answer.
+**Speed: recovered with MTP.** Out of the box generation was ~12 tok/s against
+Ollama's 30, so a scan took 45-95s. Flash attention and context size made no
+difference; the gap was speculative decoding.
+
+Generating a token means streaming all 17GB of weights, so it is bandwidth-bound.
+Verifying several candidate tokens costs one batched pass over those same weights, so
+if something cheaply guesses ahead, the model checks the batch and several tokens
+arrive for the price of roughly one. Wrong guesses are discarded, which makes the
+output bit-identical -- a pure speedup, not a quality trade.
+
+Multi-Token Prediction does the guessing inside the model itself: extra heads trained
+to predict token n+2, n+3. No draft model, no second set of weights in memory. This
+GGUF already carries it --
+
+    general.architecture       = qwen35          (the loader that implements MTP)
+    qwen35.nextn_predict_layers = 1
+    blk.64.nextn.{eh_proj,enorm,hnorm,shared_head_norm}
+
+-- and llama.cpp implements it for this architecture, but the default is off. It needs
+`--spec-type draft-mtp`, which costs 708 MiB of MTP context:
+
+| workload | before | with MTP | Ollama |
+|---|---|---|---|
+| generation, predictable text | 11.9 tok/s | **26.6** | 30.1 |
+| receipt scan, Target | 45s | **31s** | ~30s |
+| receipt scan, Brasserie | 95s | **53s** | (never correct) |
+| receipt scan, Lowe's | 80s | **65s** | (never correct) |
+| openclaw agent turn | 11.3 tok/s | **20.1** | ~30 |
+
+Draft acceptance runs 0.70-0.85 on real receipts and 1.00 on predictable text, and all
+three receipts still reconcile exactly, as an exact speculative scheme must. That
+leaves llama.cpp near parity on generation and ahead on prompt processing (~300 tok/s
+against ~270), which matters for openclaw's large system prompt.
+
+**The service definition**, since these flags are not the defaults and the reasoning
+is not obvious from them:
+
+    llama-server \
+      --model  <ollama blobs>/sha256-f5f1dd89...   # shared, not a second 17GB copy
+      --mmproj <ollama blobs>/sha256-ac3714bf...   # vision projector
+      --alias qwen3.8-27b --host 0.0.0.0 --port 11435 \
+      --ctx-size 131072      # matches what openclaw asks for; one server backs both
+      --parallel 1 \
+      --n-gpu-layers 999 \
+      --jinja                # the model's own chat template: the accuracy fix
+      --spec-type draft-mtp  # self-speculation: the speed fix
 
 **Deployment.** `llama-server` runs as its own systemd unit on port 11435, as the
 `ollama` user (already in `render`/`video` for ROCm) reading Ollama's own GGUF blobs
