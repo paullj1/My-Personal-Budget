@@ -62,6 +62,13 @@ func main() {
 		WriteTimeout:      writeTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
+	if cfg.ReceiptScanEnabled() {
+		// Pointing the wrong client at a server fails in confusing ways -- Ollama's
+		// OpenAI shim accepts the request and ignores the schema -- so say plainly
+		// which backend is in use.
+		log.Printf("receipt scanning: api=%s url=%s model=%s",
+			cfg.ReceiptOCRAPI, cfg.ReceiptOCRURL, cfg.ReceiptOCRModel)
+	}
 	log.Printf("HTTP timeouts: read=%s write=%s (receipt scanning %s)",
 		readTimeout, writeTimeout,
 		map[bool]string{true: "enabled", false: "disabled"}[cfg.ReceiptScanEnabled()])

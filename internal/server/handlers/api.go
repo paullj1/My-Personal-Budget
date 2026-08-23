@@ -78,13 +78,23 @@ func NewAPIHandler(cfg config.Config, store BudgetStore, pass *passkey.Challenge
 	}
 	h := &APIHandler{cfg: cfg, store: store, pass: pass, webAuth: w}
 	if cfg.ReceiptScanEnabled() {
-		h.extractor = receipt.NewOllamaExtractor(receipt.OllamaOptions{
-			BaseURL: cfg.ReceiptOCRURL,
-			Model:   cfg.ReceiptOCRModel,
-			Token:   cfg.ReceiptOCRToken,
-			NumCtx:  cfg.ReceiptOCRNumCtx,
-			Timeout: cfg.ReceiptOCRTimeout,
-		})
+		switch cfg.ReceiptOCRAPI {
+		case "ollama":
+			h.extractor = receipt.NewOllamaExtractor(receipt.OllamaOptions{
+				BaseURL: cfg.ReceiptOCRURL,
+				Model:   cfg.ReceiptOCRModel,
+				Token:   cfg.ReceiptOCRToken,
+				NumCtx:  cfg.ReceiptOCRNumCtx,
+				Timeout: cfg.ReceiptOCRTimeout,
+			})
+		default:
+			h.extractor = receipt.NewLlamaCppExtractor(receipt.LlamaCppOptions{
+				BaseURL: cfg.ReceiptOCRURL,
+				Model:   cfg.ReceiptOCRModel,
+				Token:   cfg.ReceiptOCRToken,
+				Timeout: cfg.ReceiptOCRTimeout,
+			})
+		}
 	}
 	return h, nil
 }

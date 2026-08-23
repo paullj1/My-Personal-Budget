@@ -13,8 +13,8 @@
 # than the app produces -- that gap is the point of having both modes.
 #
 # Env: API_URL (default http://localhost:8080), API_TOKEN,
-#      OLLAMA_URL (default http://localhost:11434), OCR_MODEL (default qwen3.8:27b),
-#      NUM_CTX (default 32768), MODE (api|model).
+#      MODEL_URL (default http://localhost:11435 -- llama-server),
+#      OCR_MODEL (default qwen3.8-27b), MODE (api|model).
 
 set -euo pipefail
 
@@ -22,9 +22,8 @@ IMAGE="${1:?usage: $0 <receipt-image>}"
 MODE="${MODE:-api}"
 API_URL="${API_URL:-http://localhost:8080}"
 API_TOKEN="${API_TOKEN:-}"
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-OCR_MODEL="${OCR_MODEL:-qwen3.8:27b}"
-NUM_CTX="${NUM_CTX:-32768}"
+MODEL_URL="${MODEL_URL:-http://localhost:11435}"
+OCR_MODEL="${OCR_MODEL:-qwen3.8-27b}"
 
 command -v jq >/dev/null || { echo "need jq" >&2; exit 1; }
 [ -f "$IMAGE" ] || { echo "no such file: $IMAGE" >&2; exit 1; }
@@ -77,100 +76,72 @@ if [ "$MODE" = "api" ]; then
 fi
 
 # ---------------------------------------------------------------- model mode ---
-# Uses Ollama's native /api/chat. Not the OpenAI-compatible /v1 shim: Ollama
-# ignores response_format:json_schema there (ollama#10001) and returns
-# unconstrained output that merely looks like JSON.
-echo "!! model mode skips document detection, which is what makes extraction reliable." >&2
-echo "   Results here are a floor, not what the app produces. Use MODE=api to test the app." >&2
+# Talks to llama-server directly. Two settings are not optional:
+#   cache_prompt:false -- a stale prompt cache is how the previous backend came to
+#     answer with a completely different receipt.
+#   enable_thinking:false -- extraction is perception, not deliberation, so every
+#     reasoning token is latency spent for nothing.
+echo "!! model mode skips document detection, which the server does. Results here are a" >&2
+echo "   floor, not what the app produces. Use MODE=api to test the app." >&2
 
 SEND="$IMAGE"
 if command -v ffmpeg >/dev/null; then
-  # Only apply EXIF and cap the long edge -- no rotation. The server decides
-  # orientation from the detected outline; guessing differently here would make
-  # this harness test a pipeline that does not ship.
   ffmpeg -v error -y -i "$IMAGE" \
     -vf "scale=w=2048:h=2048:force_original_aspect_ratio=decrease:flags=lanczos,scale=trunc(iw/2)*2:trunc(ih/2)*2" \
     -q:v 3 "$TMP/norm.jpg" && SEND="$TMP/norm.jpg"
   echo "==> capped long edge to 2048: $(wc -c <"$SEND" | tr -d ' ') bytes"
 fi
 
-# Staged through a file: a phone photo base64s past ARG_MAX as a jq --arg.
 base64 -w0 "$SEND" > "$TMP/b64"
 
-PROMPT='Extract this receipt into JSON.
+PROMPT=$(cat <<'PEOF'
+Extract this receipt into JSON. The image may be rotated.
+Copy numbers exactly and perform NO arithmetic. Every purchased item goes in items, in
+printed order; repeated items are normal. A number left of the description is a quantity,
+not a price. Sub-lines with no price, or [0.00], are modifiers. Tip and savings guides are
+not adjustments. SUBTOTAL, TAX, TOTAL, payment and department headers are not items.
+PEOF
+)
 
-RULES
-1. Copy text and numbers exactly. Perform NO arithmetic.
-2. Every purchased item goes in items, in printed order. Do not skip or duplicate any item.
-3. Sub-lines such as "Regular Price $39.99" or "Buy1Get1 50%off" are INFORMATIONAL when the
-   item amount is already the net price. They are NOT adjustments. Do not emit them.
-4. A savings SUMMARY line such as "YOUR TOTAL SAVINGS THIS TRIP: $20.00" is NOT an adjustment.
-5. Record each taxability marker verbatim in marker (T, TF, N, F) and set taxable.
-6. If a tax line prints its own base, as in "6.00000 on $70.66", put 70.66 in base and 0.06 in rate.
-7. SUBTOTAL, TAX, TOTAL, payment, savings, auth and survey lines are NOT items.
-8. Department headers such as GROCERY or KITCHEN label the items beneath them and are NOT items.
-9. Use null when something is not visible. A missing date is null, not today.'
-
-read -r -d '' SCHEMA <<'JSONEOF' || true
-{"type":"object","properties":{
- "merchant":{"type":["string","null"]},"purchased_at":{"type":["string","null"]},
- "items":{"type":"array","items":{"type":"object","properties":{
-   "position":{"type":"integer"},"line_text":{"type":"string"},"description":{"type":"string"},
-   "amount":{"type":"number"},"taxable":{"type":["boolean","null"]},"marker":{"type":["string","null"]}},
-   "required":["position","line_text","description","amount","taxable"]}},
- "adjustments":{"type":"array","items":{"type":"object","properties":{
-   "label":{"type":"string"},"amount":{"type":"number"}},"required":["label","amount"]}},
- "tax_lines":{"type":"array","items":{"type":"object","properties":{
-   "label":{"type":"string"},"rate":{"type":["number","null"]},
-   "base":{"type":["number","null"]},"amount":{"type":"number"}},"required":["label","amount"]}},
- "subtotal":{"type":["number","null"]},"total":{"type":["number","null"]},
- "tax_evidence":{"type":"string","enum":["per_line_flags","single_rate","multi_rate","unknown"]}},
- "required":["merchant","items","tax_lines","subtotal","total","tax_evidence"]}
-JSONEOF
-
-jq -n --arg m "$OCR_MODEL" --arg p "$PROMPT" --rawfile img "$TMP/b64" \
-      --argjson s "$SCHEMA" --argjson n "$NUM_CTX" '{
-  model:$m, messages:[{role:"user",content:$p,images:[($img|rtrimstr("\n"))]}],
-  think:false, stream:false, format:$s, options:{temperature:0, num_ctx:$n}
+jq -n --arg m "$OCR_MODEL" --arg p "$PROMPT" --rawfile img "$TMP/b64" '{
+  model: $m,
+  messages: [{role:"user", content:[
+    {type:"text", text:$p},
+    {type:"image_url", image_url:{url:("data:image/jpeg;base64," + ($img|rtrimstr("\n")))}}]}],
+  temperature: 0,
+  cache_prompt: false,
+  chat_template_kwargs: {enable_thinking: false}
 }' > "$TMP/req.json"
 
-echo "==> $OCR_MODEL via $OLLAMA_URL/api/chat  num_ctx=$NUM_CTX"
+echo "==> $OCR_MODEL via $MODEL_URL/v1/chat/completions"
 START="$(date +%s)"
-curl -sS --max-time 900 "$OLLAMA_URL/api/chat" -H 'Content-Type: application/json' \
+curl -sS --max-time 900 "$MODEL_URL/v1/chat/completions" -H 'Content-Type: application/json' \
   --data-binary "@$TMP/req.json" > "$TMP/resp.json"
 echo "==> $(( $(date +%s) - START ))s"
 
-if jq -e '.error' >/dev/null 2>&1 < "$TMP/resp.json"; then
-  echo "!! ollama error: $(jq -r .error < "$TMP/resp.json")" >&2
-  echo "   'think' rejected? try \"think\":\"low\". Missing model? ollama pull $OCR_MODEL" >&2
-  exit 1
-fi
-
-THINK="$(jq -r '(.message.thinking // "") | length' < "$TMP/resp.json")"
-echo "==> prompt_eval=$(jq -r '.prompt_eval_count // "?"' < "$TMP/resp.json") eval=$(jq -r '.eval_count // "?"' < "$TMP/resp.json") thinking_chars=$THINK"
-[ "$THINK" -gt 0 ] && echo "!! emitted thinking despite think:false -- pure latency; a model swap must re-verify this"
-
-jq -r '.message.content' < "$TMP/resp.json" > "$TMP/out.json"
-jq -e . >/dev/null 2>&1 < "$TMP/out.json" || {
-  echo "!! not valid JSON -- grammar not applied. Are you on /api/chat, not /v1?" >&2
-  cat "$TMP/out.json"; exit 1; }
-
-echo "==> extracted:"; jq . < "$TMP/out.json"
-echo "==> reconciliation (cents, computed here since there is no server to do it):"
-jq -r 'def c:(.//0)*100|round;
- (reduce .items[].amount as $a (0;.+($a|c)))            as $i |
- (reduce .tax_lines[].amount as $a (0;.+($a|c)))        as $t |
- (reduce (.adjustments//[])[].amount as $a (0;.+($a|c))) as $j |
- (.subtotal|c) as $s | (.total|c) as $o |
- (if $s == 0 then $i else $s end) as $eff |
- "  items=\($i) subtotal=\($s) delta=\($i - (if $s == 0 then $i else $s end))",
- "  items+tax+adj=\($eff+$t+$j) total=\($o) delta=\($eff+$t+$j-$o)",
- "  items found: \(.items|length)",
- (if ($s != 0 and $i != $s) or ($o != 0 and ($eff+$t+$j) != $o)
-  then "  MISMATCH - would fall back to pre-filled manual entry"
-  else "  OK - reconciles exactly" end),
- (if (.tax_lines[0].base // null) != null then
-    "  tax base printed=\(.tax_lines[0].base) -> taxable set = " +
-    (if (.tax_lines[0].base|c) == $i then "ALL items" else "marker subset" end)
-  else "  no printed tax base -> markers or proration" end)
-' < "$TMP/out.json"
+python3 - "$TMP/resp.json" <<'PYEOF2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+if d.get("error"):
+    print("!! server error:", d["error"].get("message", d["error"]), file=sys.stderr); raise SystemExit(1)
+if not d.get("choices"):
+    print("!! no choices in response", file=sys.stderr); raise SystemExit(1)
+msg = d["choices"][0]["message"]
+if msg.get("reasoning_content") and not (msg.get("content") or "").strip():
+    print("!! model emitted only reasoning -- thinking is not suppressed", file=sys.stderr); raise SystemExit(1)
+content = (msg.get("content") or "").strip()
+try:
+    r = json.loads(content)
+except Exception:
+    print("==> not JSON (model mode sends no schema, so this is expected):")
+    print(content[:1200]); raise SystemExit(0)
+cents = lambda v: int(round((v or 0) * 100))
+items = sum(cents(i.get("amount")) for i in r.get("items", []))
+tax   = sum(cents(t.get("amount")) for t in r.get("tax_lines", []))
+adj   = sum(cents(a.get("amount")) for a in (r.get("adjustments") or []))
+sub, tot = cents(r.get("subtotal")), cents(r.get("total"))
+eff = sub or items
+print(f"==> items={len(r.get('items', []))} itemsum={items}c tax={tax}c subtotal={sub}c total={tot}c")
+ok = (sub == 0 or items == sub) and (tot == 0 or eff + tax + adj == tot)
+print("    OK - reconciles exactly" if ok else "    MISMATCH - would fall back to manual entry")
+PYEOF2

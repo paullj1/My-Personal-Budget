@@ -25,6 +25,7 @@ type Config struct {
 	// scan endpoint returns 503 and the UI hides its button, leaving manual
 	// itemizing untouched.
 	ReceiptOCRURL     string
+	ReceiptOCRAPI     string
 	ReceiptOCRModel   string
 	ReceiptOCRToken   string
 	ReceiptOCRNumCtx  int
@@ -52,7 +53,18 @@ func FromEnv() Config {
 	rpID := envDefault("RELYING_PARTY_ID", "localhost")
 	rpName := envDefault("RELYING_PARTY_NAME", "My Personal Budget")
 	ocrURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("RECEIPT_OCR_URL")), "/")
-	ocrModel := envDefault("RECEIPT_OCR_MODEL", "qwen3.8:27b")
+	// Which inference server to talk to. llama.cpp is the default: with --jinja it
+	// applies the model's real chat template, and on identical inputs that decided
+	// whether extraction worked at all (a 14-item check went 9 items -> 14, a
+	// 6-item one 1 -> 6). It also lets prompt caching be switched off, which is how
+	// the previous backend came to answer with a previous image's contents.
+	ocrAPI := strings.ToLower(envDefault("RECEIPT_OCR_API", "llamacpp"))
+	// Model naming differs by backend: Ollama uses a tag, llama-server an alias.
+	defaultModel := "qwen3.8-27b"
+	if ocrAPI == "ollama" {
+		defaultModel = "qwen3.8:27b"
+	}
+	ocrModel := envDefault("RECEIPT_OCR_MODEL", defaultModel)
 	ocrToken := os.Getenv("RECEIPT_OCR_TOKEN")
 	// Ollama defaults to ~4096 and truncates silently, which looks like a bad
 	// model rather than a config error. Keep this well clear of the image tokens.
@@ -81,6 +93,7 @@ func FromEnv() Config {
 		RelyingPartyID:    rpID,
 		RelyingPartyName:  rpName,
 		ReceiptOCRURL:     ocrURL,
+		ReceiptOCRAPI:     ocrAPI,
 		ReceiptOCRModel:   ocrModel,
 		ReceiptOCRToken:   ocrToken,
 		ReceiptOCRNumCtx:  ocrNumCtx,

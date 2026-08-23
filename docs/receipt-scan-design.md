@@ -14,7 +14,8 @@ item has a budget dropdown, and commit as transactions. Integrated into the exis
 | D1 | Go API proxies to the inference box; browser never talks to it directly | Reuses existing JWT auth, no CORS/TLS work, Strix box stays private, works when the phone is off-LAN |
 | D2 | Qwen3.8-27B, vision only — no Tesseract/PaddleOCR | Natively multimodal; already running on the box. One service, one model |
 | D2a1 | **Model is `qwen3.8:27b` — not a smaller VLM** | **Measured. It is the only local vision model whose thinking can be disabled on Ollama; `qwen3-vl:4b`/`:8b` are 2–3× faster per token but run away thinking and never emit output (§3.6)** |
-| D2a | Served by Ollama via its **native `/api/chat`**, not the OpenAI-compatible `/v1` shim | Ollama ignores `response_format: json_schema`; only the native `format` parameter actually constrains output |
+| D2a0 | **Served by llama.cpp `llama-server`, not Ollama** | **The backend choice decided whether extraction worked at all, and fixed a data-integrity bug Ollama could not (§3.8)** |
+| D2a | *(superseded)* Served by Ollama via its **native `/api/chat`**, not the OpenAI-compatible `/v1` shim | Ollama ignores `response_format: json_schema`; only the native `format` parameter actually constrains output |
 | **D2b** | **Single grammar-constrained pass, image → JSON** | **Measured end-to-end on a real photo: 49s, all items, reconciles at 0¢. No tiling, no transcription stage, no merge** |
 | **D2c** | **Deterministic document detection: crop, deskew, orient** | **The single biggest accuracy win. Otsu + largest component + min-area rect crops the receipt out of the frame. Turned a persistently wrong extraction into two-for-two exact runs, and cut latency (§3.6)** |
 | **D2d** | **Bound the LONG edge to 2048px after cropping** | **The earlier 1600 figure came from a sweep that pinned *width*, so it was really 1600×2134. Post-crop the whole budget goes to print rather than background (§3.5)** |
@@ -397,6 +398,64 @@ Two partial routes exist if wanted later: a user can scan in Notes or Files and 
 result through the file input (already cropped and contrast-boosted), or a native wrapper
 could hand VisionKit's output to the same endpoint. Neither is the default path.
 
+### 3.8 Why llama.cpp, not Ollama
+
+Two receipts refused to extract for days under Ollama. Prompt work went nowhere:
+explicit item-block rules, a transcription-first schema, resolution sweeps, encode
+quality, lossless upload. Swapping the inference server fixed both, with the prompt
+and schema completely unchanged.
+
+| receipt | Ollama | llama-server |
+|---|---|---|
+| Target, 4 items | 4/4 | **4/4** |
+| Brasserie, 14 items | 9/14 | **14/14** |
+| Lowe's, 6 items | 1/6 | **6/6** |
+
+The cause is almost certainly the chat template. `llama-server --jinja` applies the
+model's own template; Ollama substitutes a generic one -- visible earlier as a
+13-character `{{ .Prompt }}` stub, and the same substitution that made thinking
+impossible to disable on other vision models. A wrong template degrades everything
+downstream, which is why no amount of prompt phrasing recovered it.
+
+**The correctness reason matters more than the accuracy one.** Ollama would
+sporadically answer with a *previous* image's contents. A Lowe's scan returned
+Brasserie's items byte-for-byte, subtotal and total included, and it reconciled
+perfectly -- so the safety net could not catch it. Diagnosis:
+
+- Not aborted requests. Cancelling mid-inference changed nothing.
+- Not request volume. A 30-scan soak passed, then it recurred ~40 requests later.
+- Not fixed by upgrading. It survived 0.32.13 -> 0.32.15.
+- The server logs two different images producing an identical `task.n_tokens = 1269`,
+  so a cached prompt prefix matches without accounting for the image content.
+- A per-request nonce appended to the prompt did not help, consistent with the image
+  tokens sitting before the text in the cached prefix.
+
+The soak passed because it only compared printed totals, and in the partial form of
+the failure the totals come from the *correct* image while the items come from the
+previous one. That form does fail reconciliation. Only the fully-stale form is
+silent, and that is what makes it unacceptable.
+
+`llama-server` takes `cache_prompt: false` per request, which removes the mechanism
+rather than mitigating it. Six alternating requests with no flushing showed no
+leakage.
+
+**The cost is speed.** Generation is ~12 tok/s against Ollama's ~19, so a scan takes
+45-95s rather than 22-40s. Flash attention on/off and context size 32k vs 128k make
+no measurable difference, so the gap is Ollama using MTP speculative decoding, which
+llama.cpp cannot do for this model without a separate draft model. Correct extraction
+at 95s beats a wrong one at 30s, and reconciliation cannot rescue a confidently wrong
+answer.
+
+**Deployment.** `llama-server` runs as its own systemd unit on port 11435, as the
+`ollama` user (already in `render`/`video` for ROCm) reading Ollama's own GGUF blobs
+rather than a second 17GB copy. `--ctx-size 131072` matches what openclaw asks for,
+since one server backs both. Ollama stays installed for embeddings (memory search
+needs `nomic-embed-text`, and llama-server serves one model at a time).
+
+Select the backend with `RECEIPT_OCR_API` (`llamacpp` by default, `ollama` still
+supported and tested). The two clients share one prompt and one schema, asserted by a
+test, so a change to either cannot silently apply to only one backend.
+
 ## 4. Tax allocation (server-side, deterministic)
 
 All allocation happens in **integer cents**. Floats are converted at the boundary and
@@ -666,9 +725,10 @@ aborts via `AbortController`.
 Added to `internal/config/config.go`:
 
 ```
-RECEIPT_OCR_URL=            # Ollama base URL, e.g. http://strix.tailnet.ts.net:11434
-                            # empty disables the feature; client appends /api/chat
-RECEIPT_OCR_MODEL=qwen3.8:27b
+RECEIPT_OCR_URL=            # inference base URL, e.g. http://10.0.10.10:11435
+                            # empty disables the feature
+RECEIPT_OCR_API=llamacpp    # llamacpp (default) or ollama
+RECEIPT_OCR_MODEL=qwen3.8-27b   # llama-server --alias; "qwen3.8:27b" on ollama
 RECEIPT_OCR_TOKEN=          # bearer token, if fronted by a reverse proxy
 RECEIPT_OCR_TIMEOUT_MS=60000
 RECEIPT_OCR_NUM_CTX=32768   # MUST be set high: Ollama truncates silently at ~4096
