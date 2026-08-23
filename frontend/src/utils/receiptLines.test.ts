@@ -127,23 +127,84 @@ describe('buildReceiptCommit', () => {
     expect(() => build(15)).toThrow(/exceed/i);
   });
 
-  it('ignores lines with no budget or no amount', () => {
+  it('sends unassigned lines to the catch-all individually, not as one blob', () => {
     const payload = buildReceiptCommit({
       description: 'x',
       date: '',
       total: 30,
       catchAllBudgetId: 9,
       lines: [
-        line({ budgetId: 3, amount: 10 }),
-        line({ budgetId: null, amount: 10 }),
-        line({ budgetId: 4, amount: 0 })
+        line({ budgetId: 3, amount: 10, description: 'Batteries', normKey: 'BATTERIES' }),
+        line({ budgetId: null, amount: 10, description: 'Milk', normKey: 'MILK' }),
+        line({ budgetId: null, amount: 10, description: 'Bread', normKey: 'BREAD' })
       ],
       reconciled: true
     });
-    // One assigned line plus the 20.00 remainder.
-    expect(payload.items).toHaveLength(2);
+
+    // Three real lines and no remainder: the unassigned two are committed on their
+    // own, so nothing is left over to lump together.
+    expect(payload.items).toHaveLength(3);
+    expect(payload.items.map((i) => i.budget_id)).toEqual([3, 9, 9]);
+    expect(payload.items.map((i) => i.description)).toEqual(['Batteries', 'Milk', 'Bread']);
+    // The keys suggestions learn from must survive, or the feature can never
+    // bootstrap: no history means no suggestion, and a suggestion-less commit that
+    // dropped its keys would build no history.
+    expect(payload.items.map((i) => i.norm_key)).toEqual(['BATTERIES', 'MILK', 'BREAD']);
+    expect(payload.items.some((i) => i.description === 'Unitemized remainder')).toBe(false);
+  });
+
+  // The reported case: a grocery run where only one item belongs elsewhere.
+  it('needs only the one exception selected', () => {
+    const groceries = 9;
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      line({ budgetId: null, amount: 5, description: `item ${i}`, normKey: `ITEM ${i}` })
+    );
+    lines[3] = line({ budgetId: 4, amount: 5, description: 'wine', normKey: 'WINE' });
+
+    const payload = buildReceiptCommit({
+      description: 'Market',
+      date: '',
+      total: 50,
+      catchAllBudgetId: groceries,
+      lines,
+      reconciled: true
+    });
+
+    expect(payload.items).toHaveLength(10);
+    expect(payload.items.filter((i) => i.budget_id === groceries)).toHaveLength(9);
+    expect(payload.items.filter((i) => i.budget_id === 4)).toHaveLength(1);
+  });
+
+  // A scan of an unseen merchant returns no suggestions at all, so every line
+  // arrives unassigned. That must still commit as a full itemization.
+  it('commits a wholly unassigned receipt to the catch-all', () => {
+    const payload = buildReceiptCommit({
+      description: 'New merchant',
+      date: '',
+      total: 30,
+      catchAllBudgetId: 9,
+      lines: [
+        line({ budgetId: null, amount: 10 }),
+        line({ budgetId: null, amount: 10 }),
+        line({ budgetId: null, amount: 10 })
+      ],
+      reconciled: true
+    });
+    expect(payload.items).toHaveLength(3);
+    expect(payload.items.every((i) => i.budget_id === 9)).toBe(true);
+  });
+
+  it('still skips lines with no amount', () => {
+    const payload = buildReceiptCommit({
+      description: 'x',
+      date: '',
+      total: 10,
+      catchAllBudgetId: 9,
+      lines: [line({ budgetId: 3, amount: 10 }), line({ budgetId: 4, amount: 0 })],
+      reconciled: true
+    });
+    expect(payload.items).toHaveLength(1);
     expect(payload.items[0].amount_cents).toBe(1000);
-    expect(payload.items[1].amount_cents).toBe(2000);
   });
 
   it('renumbers positions consecutively', () => {
@@ -155,6 +216,7 @@ describe('buildReceiptCommit', () => {
       lines: [line({ budgetId: 3, amount: 10 }), line({ budgetId: 4, amount: 10 })],
       reconciled: true
     });
+    // Two lines plus the 20.00 the total does not account for.
     expect(payload.items.map((i) => i.position)).toEqual([1, 2, 3]);
   });
 
@@ -188,9 +250,14 @@ describe('buildReceiptCommit', () => {
       buildReceiptCommit({ ...base, total: 0, lines: [line({ budgetId: 3, amount: 10 })] })
     ).toThrow(/greater than zero/i);
     expect(() => buildReceiptCommit({ ...base, total: 10, lines: [] })).toThrow(/at least one/i);
+    // No amount is the only thing that makes a line uncommittable now. An
+    // unassigned line is fine -- it goes to the catch-all.
+    expect(() =>
+      buildReceiptCommit({ ...base, total: 10, lines: [line({ budgetId: 3, amount: 0 })] })
+    ).toThrow(/at least one/i);
     expect(() =>
       buildReceiptCommit({ ...base, total: 10, lines: [line({ budgetId: null, amount: 10 })] })
-    ).toThrow(/at least one/i);
+    ).not.toThrow();
   });
 });
 

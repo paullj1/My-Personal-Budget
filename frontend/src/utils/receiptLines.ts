@@ -82,9 +82,14 @@ export type BuildCommitArgs = {
 };
 
 /**
- * Builds the commit payload, appending a catch-all line for anything the user
- * left unallocated. Throws with a user-facing message when the receipt cannot
- * be committed as entered.
+ * Builds the commit payload.
+ *
+ * Lines the user did not assign go to the catch-all budget individually, keeping
+ * their descriptions and norm_keys. A catch-all line is appended only for value the
+ * lines do not account for at all -- a gap between their sum and the printed total.
+ *
+ * Throws with a user-facing message when the receipt cannot be committed as
+ * entered.
  */
 export function buildReceiptCommit(args: BuildCommitArgs): CommitPayload {
   const merchant = args.description.trim() || 'Itemized receipt';
@@ -92,22 +97,30 @@ export function buildReceiptCommit(args: BuildCommitArgs): CommitPayload {
     throw new Error('Total must be greater than zero.');
   }
 
-  const assigned = args.lines.filter(
-    (line): line is ItemizedLine & { budgetId: number } => line.budgetId !== null && line.amount > 0
-  );
-  if (!assigned.length) {
-    throw new Error('Add at least one line item with a budget and amount.');
+  // A line with no budget chosen falls to the catch-all. It is NOT dropped.
+  //
+  // Dropping it was the old behaviour, and it made the catch-all look broken: on a
+  // grocery run where only one item belongs elsewhere, every other line has to be
+  // set by hand or its detail is lost. Worse, a receipt from a merchant with no
+  // history gets no suggestions at all, so every line starts unset -- the whole
+  // receipt collapsed into a single "Unitemized remainder". The money landed in the
+  // right budget, but the per-item norm_keys never reached the server, which is what
+  // budget suggestions learn from. So the feature could never bootstrap: no history
+  // meant no suggestions, and committing without suggestions built no history.
+  const committable = args.lines.filter((line) => line.amount > 0);
+  if (!committable.length) {
+    throw new Error('Add at least one line item with an amount.');
   }
 
-  const remainder = toCents(args.total) - allocatedCents(assigned);
+  const remainder = toCents(args.total) - allocatedCents(committable);
   // A cent of slack absorbs rounding between the printed total and the lines.
   if (remainder < -1) {
     throw new Error('Allocations exceed the receipt total.');
   }
 
-  const items: CommitItem[] = assigned.map((line, index) => ({
+  const items: CommitItem[] = committable.map((line, index) => ({
     position: index + 1,
-    budget_id: line.budgetId,
+    budget_id: line.budgetId ?? args.catchAllBudgetId,
     line_text: line.lineText || '',
     norm_key: line.normKey || '',
     description: line.description.trim(),
@@ -118,8 +131,10 @@ export function buildReceiptCommit(args: BuildCommitArgs): CommitPayload {
     adjust_cents: line.adjustCents || 0
   }));
 
-  // Anything unassigned still belongs on the receipt, so it becomes its own
-  // catch-all line rather than being silently dropped.
+  // Value the lines do not account for -- a hand-typed total higher than the items,
+  // say -- still belongs on the receipt, so it becomes its own catch-all line rather
+  // than being silently dropped. Unassigned lines no longer land here; they are
+  // committed above with their own detail.
   if (remainder > 0) {
     items.push({
       position: items.length + 1,

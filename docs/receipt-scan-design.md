@@ -710,6 +710,34 @@ line marked unsuggested so the user knows to look at it.
 Suggested lines are visually distinguished in the review list. Trust, but make it
 verifiable at a glance.
 
+**The client did not honour this for its first several weeks, and the divergence was
+self-reinforcing.** `buildReceiptCommit` filtered out any line whose budget the user
+had not set explicitly, and folded their combined value into a single "Unitemized
+remainder" line on the catch-all. The money reached the right budget, so nothing
+looked broken in the ledger, but two things were wrong:
+
+- On a grocery run where one item belongs elsewhere, every *other* line had to be
+  assigned by hand or lose its identity -- the opposite of what a catch-all is for.
+- The dropped lines' `norm_key`s never reached the server, and that column is what
+  the query above learns from. A merchant with no history produces no suggestions, so
+  every line arrives unassigned, so every line was dropped, so no history was
+  written. Suggestions could never bootstrap for any new merchant.
+
+Unassigned lines are now committed individually against the catch-all, keeping their
+descriptions and keys. The remainder line still exists, but only for value the lines
+genuinely do not account for -- a hand-typed total above the sum of its items.
+
+Two supporting changes were needed. The commit-readiness check required at least one
+*assigned* line, which meant a scan of an unseen merchant could not be committed at
+all until a row was set by hand; it now requires only a line with an amount. And the
+per-item dropdown's blank option now names the catch-all ("Groceries (default)"),
+because a blank reads as "nothing chosen yet" and invites exactly the row-by-row
+selection this was meant to avoid.
+
+The server side needed nothing: `CommitReceipt` already mapped a nil or zero
+`budget_id` to the catch-all, and `TestCommitReceiptUnassignedItemsGoToCatchAll`
+already covered it. The contract was implemented at the wrong end of the wire.
+
 ## 6. Data model
 
 Appended to `db/schema.sql`, which `ApplyMigrations` (`internal/database/migrations.go:11`)

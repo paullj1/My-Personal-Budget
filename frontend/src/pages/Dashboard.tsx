@@ -372,8 +372,12 @@ const Dashboard = () => {
   );
   const itemizeRemainder = useMemo(() => round2(receiptTotal - allocatedTotal), [receiptTotal, allocatedTotal]);
   const overAllocated = itemizeRemainder < -0.009;
+  // An unassigned line is still committable -- it falls to the catch-all -- so
+  // readiness depends on having an amount, not on having picked a budget. Requiring
+  // a budget here meant a scan with no history suggestions could not be committed
+  // until every row was set by hand.
   const activeItemLines = useMemo(
-    () => itemizedLines.filter((line) => line.budgetId !== null && line.amount > 0),
+    () => itemizedLines.filter((line) => line.amount > 0),
     [itemizedLines]
   );
   const catchAllBudget = useMemo(
@@ -1324,7 +1328,12 @@ const Dashboard = () => {
                               updateItemLine(line.id, { budgetId: Number(e.target.value) || null, suggested: false })
                             }
                           >
-                            <option value="">Select</option>
+                            {/* Naming the catch-all here is the point: a blank
+                                option read as "nothing chosen yet", so every row
+                                looked like it needed setting. */}
+                            <option value="">
+                              {catchAllBudget ? `${catchAllBudget.name} (default)` : 'Select'}
+                            </option>
                             {budgets.map((option) => (
                               <option key={option.id} value={option.id}>
                                 {option.name}
