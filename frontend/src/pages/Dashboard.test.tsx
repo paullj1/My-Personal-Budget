@@ -241,3 +241,43 @@ describe('scan progress', () => {
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
   });
 });
+
+describe('catch-all defaulting', () => {
+  // The reported bug: the form refused to submit until a budget was picked for
+  // every item. An unassigned line is committable -- it falls to the catch-all --
+  // so having an amount is the only thing that should gate submission.
+  it('enables submit with a line that has an amount but no budget', async () => {
+    stubApi({ receiptScan: false });
+    renderDashboard();
+    await openItemizeWizard();
+
+    fireEvent.change(screen.getByLabelText(/receipt total/i), { target: { value: '10' } });
+    // The default line starts with no budget selected, which is exactly the state
+    // a scan of an unseen merchant produces for every row.
+    const amounts = screen.getAllByLabelText(/^amount$/i);
+    fireEvent.change(amounts[amounts.length - 1], { target: { value: '10' } });
+
+    const save = screen.getByRole('button', { name: /save itemized receipt/i });
+    await waitFor(() => expect(save).toBeEnabled());
+  });
+
+  it('names the catch-all in the per-item dropdown instead of a blank option', async () => {
+    stubApi({ receiptScan: false });
+    renderDashboard();
+    await openItemizeWizard();
+
+    // A blank option reads as "nothing chosen yet" and invites row-by-row
+    // selection; naming the destination is the whole point.
+    await waitFor(() => expect(screen.getByText(/groceries \(default\)/i)).toBeInTheDocument());
+  });
+
+  it('still blocks submit when no line has an amount', async () => {
+    stubApi({ receiptScan: false });
+    renderDashboard();
+    await openItemizeWizard();
+
+    fireEvent.change(screen.getByLabelText(/receipt total/i), { target: { value: '10' } });
+    const save = screen.getByRole('button', { name: /save itemized receipt/i });
+    await waitFor(() => expect(save).toBeDisabled());
+  });
+});
