@@ -501,3 +501,50 @@ func TestIntegrationPurgeStaleOAuthIsQuietWhenClean(t *testing.T) {
 		t.Fatalf("a second sweep still found work: %+v", result)
 	}
 }
+
+// The commit path has to record which pipeline produced the extraction.
+func TestIntegrationCommitReceiptRecordsExtractionSource(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	userID := testUser(t, db)
+
+	var budgetID int64
+	if err := db.QueryRow(`INSERT INTO budgets (name) VALUES ('Groceries') RETURNING id`).Scan(&budgetID); err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM budgets WHERE id = $1`, budgetID) })
+	if _, err := db.Exec(`INSERT INTO users_budgets (user_id, budget_id) VALUES ($1, $2)`, userID, budgetID); err != nil {
+		t.Fatalf("share budget: %v", err)
+	}
+
+	for _, source := range []string{SourceClientSupplied, ""} {
+		result, err := s.CommitReceipt(context.Background(), &userID, ReceiptInput{
+			Merchant: "Target", CatchAllBudgetID: budgetID, Reconciled: true,
+			ExtractionSource: source,
+			Items: []ReceiptItemInput{
+				{Position: 1, Description: "Gatorade", NormKey: "GATORADE", AmountCents: 699, TaxCents: 42},
+			},
+		})
+		if err != nil {
+			t.Fatalf("commit (%q): %v", source, err)
+		}
+		t.Cleanup(func() { db.Exec(`DELETE FROM receipts WHERE id = $1`, result.Receipt.ID) })
+
+		want := source
+		if want == "" {
+			// An unset source is the app's own pipeline, which is every row that
+			// predates the column.
+			want = SourceServerOCR
+		}
+		if result.Receipt.ExtractionSource != want {
+			t.Fatalf("extraction_source: got %q want %q", result.Receipt.ExtractionSource, want)
+		}
+		reloaded, _, err := s.GetReceipt(context.Background(), result.Receipt.ID, &userID)
+		if err != nil {
+			t.Fatalf("get receipt: %v", err)
+		}
+		if reloaded.ExtractionSource != want {
+			t.Fatalf("reloaded extraction_source: got %q want %q", reloaded.ExtractionSource, want)
+		}
+	}
+}

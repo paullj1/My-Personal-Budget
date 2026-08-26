@@ -30,6 +30,7 @@ item has a budget dropdown, and commit as transactions. Integrated into the exis
 | D11 | Transactions backdated to the printed receipt date | Spending lands in the period it happened |
 | D12 | Commit is one atomic DB transaction | Replaces today's non-atomic N-POST loop |
 | D13 | Suggestion history scoped to budgets the user can access | Shared budgets get shared learning, which is the point of the share table |
+| **D15** | **A remote MCP client may supply the extraction instead of the image** | **D3 already draws the line: the model reports facts, this server does the arithmetic. That makes the vision step swappable, so a client that can already see the photo sends the JSON rather than paying a base64 round trip to be re-read by a smaller local model. Reconciliation validates it identically (§13)** |
 | D14 | Feature disabled when `RECEIPT_OCR_URL` is empty | The API reports `features.receipt_scan: false`, the scan endpoint answers 503, the server keeps its tight 10s timeouts, and the UI shows neither the button nor any copy mentioning scanning. The capability check fails closed, so an unreachable API hides it too. Manual itemizing is untouched |
 
 ## 2. Architecture
@@ -1030,3 +1031,43 @@ re-parse of a stored `parsed` blob.
   receipts. The model should merge them; reconciliation catches it when it doesn't.
 - **Non-item lines.** Deposits, bottle fees, loyalty discounts, and store credit vary
   wildly by retailer. Expect prompt iteration driven by real failures.
+
+## 13. Client-supplied extraction (MCP)
+
+D3 says the model reports facts and the server does the arithmetic. Everything downstream of
+that line — `Allocate`, the tax basis logic, `Reconciliation` — is a pure function of an
+`Extraction`. Nothing in it knows or cares which model filled the struct.
+
+So the extraction step is swappable, and for a caller that has already seen the photo,
+swapping it is strictly better. Posting the image back would mean a multi-megabyte base64
+round trip over JSON-RPC, the whole `RECEIPT_OCR_TIMEOUT` budget spent, and an answer from a
+model chosen for what fits on the box rather than for what reads receipts best.
+
+**The tool boundary is the `Extraction` JSON, not the image.**
+
+- `draft_receipt` takes the extraction, runs the same `Allocate` and reconciliation as
+  `POST /receipts/scan`, and returns a draft id.
+- `commit_receipt` takes that draft id plus `{position, budget_id}` pairs.
+
+The split between those two is not cosmetic. `POST /api/v1/receipts` accepts full item bodies
+including `amount_cents`, because the browser is echoing back numbers this server computed
+seconds earlier. Point that at a language model and it re-types every cent on the way back,
+with a chance to corrupt each one silently. Holding the allocation server-side and taking only
+budget choices on commit means the caller decides *which budget* and never *how much*.
+
+**Reconciliation is what makes this safe at all.** It compares items-sum against printed
+subtotal and computed against printed total, in cents. A client that misreads a line fails
+that check exactly as the local model does — the validator did not weaken when the eyes
+changed, which is the entire reason the Phase 0 confidence field was thrown away in favour of
+it. `commit_receipt` refuses a failed draft unless `accept_unreconciled` is set.
+
+The tool's description carries `extractPrompt` verbatim via `receipt.ExtractionRules()`, and
+its `inputSchema` is `extractSchema` itself. A second copy of those rules written for MCP
+clients would drift from the originals one edit at a time, and each of those rules exists
+because its absence produced a specific wrong answer.
+
+`receipts.extraction_source` records which path produced a row: `server_ocr` for this app's own
+pipeline (hand entry and hand corrections included), `client_supplied` for an extraction that
+arrived already structured. Deliberately not model names — `receipts.model` already holds the
+server-side one, and the client-side model is neither observable from here nor stable enough to
+be worth a column full of last year's name.

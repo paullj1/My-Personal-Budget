@@ -1,5 +1,10 @@
 package receipt
 
+import (
+	"encoding/json"
+	"sync"
+)
+
 // The extraction contract shared by every backend: what the model is asked for,
 // and the schema its answer must satisfy. Kept apart from any one client so the
 // two cannot drift.
@@ -90,3 +95,32 @@ const extractSchema = `{
   },
   "required": ["merchant", "items", "tax_lines", "subtotal", "total", "tax_evidence"]
 }`
+
+// ExtractionRules returns the extraction contract as prose, for a caller that
+// reads the receipt itself instead of handing this app the photo.
+//
+// It is the same text the built-in backends send. Sharing it is the point: the
+// rules here were each paid for by a specific wrong answer, and a second copy
+// written for MCP clients would drift away from them one edit at a time.
+func ExtractionRules() string { return extractPrompt }
+
+// ExtractionSchema returns the JSON Schema an extraction must satisfy, parsed
+// so it can be embedded in a tool definition.
+//
+// Parsed once: the schema is a compile-time constant, and re-parsing it per
+// tools/list call would be work done to reach the same answer.
+func ExtractionSchema() map[string]any {
+	schemaOnce.Do(func() {
+		if err := json.Unmarshal([]byte(extractSchema), &parsedSchema); err != nil {
+			// Unreachable unless extractSchema is edited into invalid JSON, which
+			// the test in this package catches first.
+			panic("receipt: extractSchema is not valid JSON: " + err.Error())
+		}
+	})
+	return parsedSchema
+}
+
+var (
+	schemaOnce   sync.Once
+	parsedSchema map[string]any
+)

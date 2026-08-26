@@ -41,9 +41,27 @@ type ReceiptInput struct {
 	TaxBasis         string
 	Reconciled       bool
 	Model            string
+	// ExtractionSource records which path produced the extraction: SourceServerOCR
+	// when this app read the photo itself, SourceClientSupplied when an MCP client
+	// structured it and only the arithmetic happened here. Empty defaults to
+	// SourceServerOCR, which is what every pre-existing row is.
+	ExtractionSource string
 	Parsed           json.RawMessage
 	Items            []ReceiptItemInput
 }
+
+// Where an extraction came from -- the app's own pipeline, or a caller that
+// arrived with the receipt already structured.
+//
+// Deliberately not model names. The server-side model is already recorded in
+// Model, and the client-side one is not something this app can observe or trust
+// to stay the same; a column full of last year's model name would be worse than
+// no column. Hand-entered and hand-corrected receipts count as SourceServerOCR:
+// they came through this app's own path, which is the distinction being drawn.
+const (
+	SourceServerOCR      = "server_ocr"
+	SourceClientSupplied = "client_supplied"
+)
 
 // Receipt is a committed receipt.
 type Receipt struct {
@@ -58,7 +76,9 @@ type Receipt struct {
 	TaxEvidence   string     `json:"tax_evidence"`
 	TaxBasis      string     `json:"tax_basis"`
 	Reconciled    bool       `json:"reconciled"`
-	CreatedAt     time.Time  `json:"created_at"`
+	// ExtractionSource is SourceServerOCR or SourceClientSupplied.
+	ExtractionSource string    `json:"extraction_source"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // CommitReceiptResult reports what was written.
@@ -140,6 +160,10 @@ func (s *Store) CommitReceipt(ctx context.Context, userID *int64, in ReceiptInpu
 	if len(parsed) == 0 {
 		parsed = json.RawMessage(`{}`)
 	}
+	source := in.ExtractionSource
+	if source == "" {
+		source = SourceServerOCR
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -150,15 +174,16 @@ func (s *Store) CommitReceipt(ctx context.Context, userID *int64, in ReceiptInpu
 	var receipt Receipt
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO receipts (user_id, merchant, purchased_at, currency, subtotal_cents,
-		                      tax_cents, total_cents, tax_evidence, tax_basis, reconciled, parsed, model)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		                      tax_cents, total_cents, tax_evidence, tax_basis, reconciled, parsed, model,
+		                      extraction_source)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		RETURNING id, user_id, merchant, purchased_at, currency, subtotal_cents,
-		          tax_cents, total_cents, tax_evidence, tax_basis, reconciled, created_at;`,
+		          tax_cents, total_cents, tax_evidence, tax_basis, reconciled, extraction_source, created_at;`,
 		userID, in.Merchant, purchasedAt, currency, subtotal, tax, total,
-		nullableEvidence(in.TaxEvidence), in.TaxBasis, in.Reconciled, []byte(parsed), in.Model,
+		nullableEvidence(in.TaxEvidence), in.TaxBasis, in.Reconciled, []byte(parsed), in.Model, source,
 	).Scan(&receipt.ID, &receipt.UserID, &receipt.Merchant, &receipt.PurchasedAt, &receipt.Currency,
 		&receipt.SubtotalCents, &receipt.TaxCents, &receipt.TotalCents, &receipt.TaxEvidence,
-		&receipt.TaxBasis, &receipt.Reconciled, &receipt.CreatedAt)
+		&receipt.TaxBasis, &receipt.Reconciled, &receipt.ExtractionSource, &receipt.CreatedAt)
 	if err != nil {
 		if isForeignKeyError(err) {
 			return CommitReceiptResult{}, ErrNotFound
@@ -320,10 +345,11 @@ func (s *Store) GetReceipt(ctx context.Context, id int64, userID *int64) (Receip
 	var r Receipt
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, user_id, merchant, purchased_at, currency, subtotal_cents, tax_cents,
-		       total_cents, tax_evidence, tax_basis, reconciled, created_at
+		       total_cents, tax_evidence, tax_basis, reconciled, extraction_source, created_at
 		FROM receipts WHERE id = $1;`, id).
 		Scan(&r.ID, &r.UserID, &r.Merchant, &r.PurchasedAt, &r.Currency, &r.SubtotalCents,
-			&r.TaxCents, &r.TotalCents, &r.TaxEvidence, &r.TaxBasis, &r.Reconciled, &r.CreatedAt)
+			&r.TaxCents, &r.TotalCents, &r.TaxEvidence, &r.TaxBasis, &r.Reconciled,
+			&r.ExtractionSource, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Receipt{}, nil, ErrNotFound
 	}

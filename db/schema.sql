@@ -153,6 +153,16 @@ ALTER TABLE transacts
   ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS index_transacts_on_receipt_id ON transacts (receipt_id);
 
+-- Where an extraction came from, so the two paths can be compared later without
+-- guessing. Deliberately not the model's name: the server-side model is already
+-- in receipts.model, and the client-side one is not something this app can see
+-- or trust to stay put.
+--   server_ocr      -- came through this app's own pipeline, hand entry included
+--   client_supplied -- arrived already structured from an MCP client
+ALTER TABLE receipts
+  ADD COLUMN IF NOT EXISTS extraction_source VARCHAR NOT NULL DEFAULT 'server_ocr';
+CREATE INDEX IF NOT EXISTS index_receipts_on_extraction_source ON receipts (extraction_source);
+
 -- Timestamps here are TIMESTAMPTZ, unlike the legacy tables above.
 --
 -- These are the first columns this app compares against a Go-side time.Now()

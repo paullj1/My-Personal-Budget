@@ -34,8 +34,23 @@ used. Store integration tests cover this — see `AGENTS.md`. The script creates
   - `GET/POST/DELETE /api/v1/budgets/{id}/shares`
 
 ## MCP endpoint
-`POST /mcp` speaks JSON-RPC over Streamable HTTP and authenticates with either an API key
-(`Authorization: Bearer mpb_...`) or an OAuth access token.
+`POST /mcp` speaks JSON-RPC over Streamable HTTP. Tools:
+- `list_budgets` / `add_transaction` – the ledger basics.
+- `draft_receipt` – takes a receipt **you already read** as structured JSON and returns a priced,
+  per-line allocation plus a reconciliation verdict and budget suggestions. The tool description
+  carries `internal/receipt/prompt.go`'s extraction rules verbatim, so a remote model is held to the
+  same contract as the local one. No arithmetic is accepted from the caller: tax proration and
+  totals are computed here in integer cents.
+- `commit_receipt` – commits a draft by id. You send positions and budget ids; the amounts come from
+  the draft, so a client cannot mistype a number into the ledger. A draft that failed reconciliation
+  is refused unless `accept_unreconciled` is set.
+
+Sending the photo to `/api/v1/receipts/scan` is still the path for clients with no vision of their
+own; `draft_receipt` is for clients that can read the image better than the configured local model.
+Receipts record which path produced them in `receipts.extraction_source` (`server_ocr` or
+`client_supplied`).
+
+Authenticate with either an API key (`Authorization: Bearer mpb_…`) or an OAuth access token.
 
 ## OAuth
 Set `PUBLIC_BASE_URL` (and `JWT_SECRET`) to run the built-in authorization server, which is what

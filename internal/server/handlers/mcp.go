@@ -5,12 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"time"
 
 	"my-personal-budget/internal/auth"
+	"my-personal-budget/internal/receipt"
 	"my-personal-budget/internal/store"
 )
 
@@ -28,16 +32,22 @@ const defaultProtocolVersion = "2025-03-26"
 const maxMCPBody = 4 << 20
 
 type MCPHandler struct {
-	store MCPStore
+	store  MCPStore
+	drafts *receipt.DraftStore
 }
 
 type MCPStore interface {
 	ListBudgets(ctx context.Context, userID *int64) ([]store.Budget, error)
 	CreateTransaction(ctx context.Context, budgetID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
+	SuggestBudgets(ctx context.Context, userID *int64, keys []string) (map[string]int64, error)
+	CommitReceipt(ctx context.Context, userID *int64, in store.ReceiptInput) (store.CommitReceiptResult, error)
 }
 
 func NewMCPHandler(store MCPStore) http.Handler {
-	return &MCPHandler{store: store}
+	return &MCPHandler{
+		store:  store,
+		drafts: receipt.NewDraftStore(receipt.DefaultDraftTTL, 64),
+	}
 }
 
 type mcpRequest struct {
@@ -206,6 +216,30 @@ func supportedVersion(v string) bool {
 
 // --- Tool definitions -----------------------------------------------------
 
+// draftReceiptDescription tells the calling model how to read a receipt.
+//
+// A tool description is the only prompt a remote client ever sees, so the rules
+// this app spent Phase 0 learning have to travel in it. receipt.ExtractionRules
+// supplies them verbatim rather than a paraphrase.
+func draftReceiptDescription() string {
+	return strings.Join([]string{
+		"Turn a receipt you have already read into a priced, per-line allocation.",
+		"",
+		"Call this when you can see the receipt image yourself: read it, structure it",
+		"to the schema below, and send the facts. Do NOT do any arithmetic -- tax",
+		"proration, discounts and the reconciliation check all happen server-side in",
+		"integer cents, and a total you compute yourself will be discarded.",
+		"",
+		"The result reports whether the printed subtotal and total reconcile against",
+		"the lines you sent. If they do not, you misread something: fix it and call",
+		"again rather than committing.",
+		"",
+		"Returns a draft_id. Pass it to commit_receipt with your budget choices.",
+		"",
+		receipt.ExtractionRules(),
+	}, "\n")
+}
+
 func mcpTools() []map[string]any {
 	return []map[string]any{
 		{
@@ -232,6 +266,49 @@ func mcpTools() []map[string]any {
 				"additionalProperties": false,
 			},
 		},
+		{
+			"name":        "draft_receipt",
+			"description": draftReceiptDescription(),
+			"inputSchema": receipt.ExtractionSchema(),
+		},
+		{
+			"name": "commit_receipt",
+			"description": strings.Join([]string{
+				"Commit a draft from draft_receipt, writing one transaction per budget.",
+				"",
+				"Assign lines to budgets by position. Anything you leave unassigned goes to",
+				"catch_all_budget_id, so every cent lands somewhere. Amounts come from the",
+				"draft and cannot be overridden here.",
+				"",
+				"A draft that failed reconciliation is refused unless accept_unreconciled is",
+				"true; prefer re-reading the receipt over forcing it through.",
+			}, "\n"),
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"draft_id": map[string]any{"type": "string"},
+					"catch_all_budget_id": map[string]any{
+						"type":        "integer",
+						"description": "Budget that receives every line you did not assign.",
+					},
+					"assignments": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"position":  map[string]any{"type": "integer"},
+								"budget_id": map[string]any{"type": "integer"},
+							},
+							"required":             []string{"position", "budget_id"},
+							"additionalProperties": false,
+						},
+					},
+					"accept_unreconciled": map[string]any{"type": "boolean"},
+				},
+				"required":             []string{"draft_id", "catch_all_budget_id"},
+				"additionalProperties": false,
+			},
+		},
 	}
 }
 
@@ -255,6 +332,10 @@ func (h *MCPHandler) handleToolsCall(r *http.Request, id any, params json.RawMes
 		return h.callListBudgets(r, id, userID)
 	case "add_transaction":
 		return h.callAddTransaction(r, id, userID, payload.Arguments)
+	case "draft_receipt":
+		return h.callDraftReceipt(r, id, userID, payload.Arguments)
+	case "commit_receipt":
+		return h.callCommitReceipt(r, id, userID, payload.Arguments)
 	default:
 		return errorResponse(id, -32601, "unknown tool")
 	}
@@ -306,6 +387,198 @@ func (h *MCPHandler) callAddTransaction(r *http.Request, id any, userID *int64, 
 		"credit":      txn.Credit,
 		"amount":      txn.Amount,
 		"created_at":  txn.CreatedAt,
+	})
+}
+
+// draftLine is one allocated line as the caller sees it: what it is, what it
+// costs all-in, and which budget the app would guess for it.
+type draftLine struct {
+	Position          int    `json:"position"`
+	Description       string `json:"description"`
+	AmountCents       int    `json:"amount_cents"`
+	TaxCents          int    `json:"tax_cents"`
+	AdjustCents       int    `json:"adjust_cents"`
+	TotalCents        int    `json:"total_cents"`
+	SuggestedBudgetID *int64 `json:"suggested_budget_id,omitempty"`
+	SuggestionSource  string `json:"suggestion_source,omitempty"`
+}
+
+func (h *MCPHandler) callDraftReceipt(r *http.Request, id any, userID *int64, args json.RawMessage) mcpResponse {
+	var extraction receipt.Extraction
+	if err := json.Unmarshal(args, &extraction); err != nil {
+		return errorResponse(id, -32602, "arguments do not match the extraction schema")
+	}
+	if len(extraction.Items) == 0 {
+		return errorResponse(id, -32602, "at least one item is required")
+	}
+
+	alloc := receipt.Allocate(extraction)
+
+	keys := make([]string, 0, len(alloc.Lines))
+	for _, l := range alloc.Lines {
+		keys = append(keys, l.NormKey)
+	}
+	suggestions, err := h.store.SuggestBudgets(r.Context(), userID, keys)
+	if err != nil {
+		// Suggestions are a convenience; losing them must not fail the draft.
+		log.Printf("mcp: receipt budget suggestions failed: %v", err)
+		suggestions = map[string]int64{}
+	}
+
+	draftID, err := h.drafts.Put(receipt.Draft{
+		UserID:      *userID,
+		Alloc:       alloc,
+		Extraction:  extraction,
+		Suggestions: suggestions,
+	})
+	if err != nil {
+		return errorResponse(id, -32000, "failed to store draft")
+	}
+
+	lines := make([]draftLine, 0, len(alloc.Lines))
+	for _, l := range alloc.Lines {
+		line := draftLine{
+			Position:    l.Position,
+			Description: l.Description,
+			AmountCents: l.AmountCents,
+			TaxCents:    l.TaxCents,
+			AdjustCents: l.AdjustCents,
+			TotalCents:  l.TotalCents,
+		}
+		if budgetID, found := suggestions[l.NormKey]; found {
+			b := budgetID
+			line.SuggestedBudgetID = &b
+			line.SuggestionSource = "history"
+		}
+		lines = append(lines, line)
+	}
+
+	log.Printf("mcp draft_receipt: merchant=%q lines=%d total=%s reconciled=%t basis=%s",
+		alloc.Merchant, len(alloc.Lines), centsString(alloc.TotalCents),
+		alloc.Reconciliation.OK, alloc.TaxBasis)
+
+	return toolResult(id, map[string]any{
+		"draft_id":       draftID,
+		"merchant":       alloc.Merchant,
+		"purchased_at":   plausibleReceiptDate(alloc.PurchasedAt, time.Now()),
+		"currency":       alloc.Currency,
+		"subtotal_cents": alloc.SubtotalCents,
+		"tax_cents":      alloc.TaxCents,
+		"adjust_cents":   alloc.AdjustCents,
+		"total_cents":    alloc.TotalCents,
+		"tax_evidence":   alloc.TaxEvidence,
+		"tax_basis":      alloc.TaxBasis,
+		"reconciliation": alloc.Reconciliation,
+		"notes":          alloc.Notes,
+		"items":          lines,
+		"expires_in_s":   int(receipt.DefaultDraftTTL.Seconds()),
+	})
+}
+
+func (h *MCPHandler) callCommitReceipt(r *http.Request, id any, userID *int64, args json.RawMessage) mcpResponse {
+	var req struct {
+		DraftID          string `json:"draft_id"`
+		CatchAllBudgetID int64  `json:"catch_all_budget_id"`
+		Assignments      []struct {
+			Position int   `json:"position"`
+			BudgetID int64 `json:"budget_id"`
+		} `json:"assignments"`
+		AcceptUnreconciled bool `json:"accept_unreconciled"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return errorResponse(id, -32602, "invalid arguments")
+	}
+	if strings.TrimSpace(req.DraftID) == "" {
+		return errorResponse(id, -32602, "draft_id is required")
+	}
+	if req.CatchAllBudgetID <= 0 {
+		return errorResponse(id, -32602, "catch_all_budget_id is required")
+	}
+
+	draft, ok := h.drafts.Get(strings.TrimSpace(req.DraftID), *userID)
+	if !ok {
+		return errorResponse(id, -32004, "that draft expired or does not exist; call draft_receipt again")
+	}
+	if !draft.Alloc.Reconciliation.OK && !req.AcceptUnreconciled {
+		return errorResponse(id, -32005, fmt.Sprintf(
+			"this receipt does not reconcile (%s); re-read it, or pass accept_unreconciled to commit it as-is",
+			draft.Alloc.Reconciliation.Message))
+	}
+
+	assigned := make(map[int]int64, len(req.Assignments))
+	for _, a := range req.Assignments {
+		if a.BudgetID > 0 {
+			assigned[a.Position] = a.BudgetID
+		}
+	}
+
+	// Amounts come from the draft, never from the request: the caller chooses
+	// budgets, this side owns the cents.
+	items := make([]store.ReceiptItemInput, 0, len(draft.Alloc.Lines))
+	for _, l := range draft.Alloc.Lines {
+		item := store.ReceiptItemInput{
+			Position:    l.Position,
+			LineText:    l.LineText,
+			NormKey:     l.NormKey,
+			Description: l.Description,
+			Marker:      l.Marker,
+			Taxable:     l.Taxable,
+			AmountCents: l.AmountCents,
+			TaxCents:    l.TaxCents,
+			AdjustCents: l.AdjustCents,
+		}
+		if budgetID, found := assigned[l.Position]; found {
+			b := budgetID
+			item.BudgetID = &b
+		} else if budgetID, found := draft.Suggestions[l.NormKey]; found {
+			b := budgetID
+			item.BudgetID = &b
+		}
+		items = append(items, item)
+	}
+
+	parsed, err := json.Marshal(draft.Extraction)
+	if err != nil {
+		parsed = []byte(`{}`)
+	}
+
+	result, err := h.store.CommitReceipt(r.Context(), userID, store.ReceiptInput{
+		Merchant:         draft.Alloc.Merchant,
+		PurchasedAt:      plausibleReceiptDate(draft.Alloc.PurchasedAt, time.Now()),
+		Currency:         draft.Alloc.Currency,
+		CatchAllBudgetID: req.CatchAllBudgetID,
+		TaxEvidence:      draft.Alloc.TaxEvidence,
+		TaxBasis:         draft.Alloc.TaxBasis,
+		Reconciled:       draft.Alloc.Reconciliation.OK,
+		ExtractionSource: store.SourceClientSupplied,
+		Parsed:           parsed,
+		Items:            items,
+	})
+	switch {
+	case errors.Is(err, store.ErrNoReceiptItems):
+		return errorResponse(id, -32602, "at least one item is required")
+	case errors.Is(err, store.ErrNotFound):
+		return errorResponse(id, -32004, "budget not found")
+	case err != nil:
+		log.Printf("mcp commit_receipt: %v", err)
+		return errorResponse(id, -32000, "failed to save receipt")
+	}
+
+	// The draft has served its purpose; keeping it would let the same receipt be
+	// committed twice.
+	h.drafts.Delete(strings.TrimSpace(req.DraftID))
+
+	budgetIDs := append([]int64(nil), result.BudgetIDs...)
+	sort.Slice(budgetIDs, func(i, j int) bool { return budgetIDs[i] < budgetIDs[j] })
+
+	return toolResult(id, map[string]any{
+		"receipt_id":   result.Receipt.ID,
+		"merchant":     result.Receipt.Merchant,
+		"total_cents":  result.Receipt.TotalCents,
+		"reconciled":   result.Receipt.Reconciled,
+		"budget_ids":   budgetIDs,
+		"transactions": len(result.Transactions),
+		"items":        len(result.Items),
 	})
 }
 
