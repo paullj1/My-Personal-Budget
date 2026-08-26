@@ -33,6 +33,10 @@ used. Store integration tests cover this — see `AGENTS.md`. The script creates
   - `POST /api/v1/budgets/{id}/transactions`
   - `GET/POST/DELETE /api/v1/budgets/{id}/shares`
 
+## MCP endpoint
+`POST /mcp` speaks JSON-RPC over Streamable HTTP and authenticates with either an API key
+(`Authorization: Bearer mpb_...`) or an OAuth access token.
+
 ## OAuth
 Set `PUBLIC_BASE_URL` (and `JWT_SECRET`) to run the built-in authorization server, which is what
 lets web clients such as the Claude app connect without a pasted key. Clients register themselves;

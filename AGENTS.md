@@ -23,9 +23,9 @@
 
 ## Auth & Security
 - JWT auth; tokens issued when passkey login finishes. `JWT_SECRET` must be set for protected routes.
-- The OAuth authorization server (`internal/oauth`, `internal/server/handlers/oauth.go`) runs only
-  when `PUBLIC_BASE_URL` and `JWT_SECRET` are both set; consent is a logged-in browser action, so it
-  rides the passkey session.
+- `/mcp` accepts an API key or an OAuth access token. The OAuth authorization server (`internal/oauth`,
+  `internal/server/handlers/oauth.go`) runs only when `PUBLIC_BASE_URL` and `JWT_SECRET` are both set;
+  consent is a logged-in browser action, so it rides the passkey session.
 - OAuth tokens are opaque and stored hashed, not JWTs, so that disconnecting a client from the
   Connections screen takes effect on its next request.
 - Client registration is open by necessity. `middleware.RateLimit` caps the inflow and

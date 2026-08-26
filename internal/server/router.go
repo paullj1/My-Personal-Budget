@@ -46,12 +46,14 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 	mux.Handle("/api/v1/auth/passkeys/login/begin", api.PasskeyLoginBeginHandler())
 	mux.Handle("/api/v1/auth/passkeys/login/finish", api.PasskeyLoginFinishHandler())
 
-	// The OAuth authorization server, when a public origin is configured. It
-	// cannot name itself from a request -- a spoofed Host header would rewrite the
-	// advertised issuer -- so an explicit public origin is what enables it.
+	// The OAuth authorization server, when a public origin is configured. Without
+	// it /mcp still works, but only with a pasted API key: a web client has no way
+	// to discover an issuer that cannot name itself.
 	var oauthHandler *handlers.OAuthHandler
+	resourceMetadataURL := ""
 	if cfg.OAuthEnabled() {
 		oauthHandler = handlers.NewOAuthHandler(cfg, store)
+		resourceMetadataURL = cfg.PublicBaseURL + protectedResourceMetadataPath
 
 		mux.HandleFunc(protectedResourceMetadataPath, oauthHandler.ProtectedResourceMetadata)
 		// Clients built against RFC 9728's path-insertion rule look for the
@@ -72,7 +74,7 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 	}
 
 	mcp := handlers.NewMCPHandler(store)
-	mux.Handle("/mcp", middleware.APIKeyAuth(store, mcp))
+	mux.Handle("/mcp", middleware.MCPAuth(store, resourceMetadataURL, mcp))
 
 	apiMux := http.NewServeMux()
 	apiMux.Handle("/", api.Router())
