@@ -21,6 +21,32 @@ type Config struct {
 	RelyingPartyID    string
 	RelyingPartyName  string
 
+	// PublicBaseURL is the origin remote clients reach this server on, e.g.
+	// https://budget.example.com. OAuth metadata has to advertise absolute URLs
+	// and the issuer must match them exactly, so this cannot be inferred from an
+	// incoming request without letting a spoofed Host header rewrite the issuer.
+	// Empty disables the OAuth authorization server; API keys keep working.
+	PublicBaseURL string
+
+	// OAuthAccessTokenTTL bounds an access token's life. Refresh tokens and the
+	// connection itself do not expire unless the user says so, so this is only
+	// how often a client has to come back, not how long access lasts.
+	OAuthAccessTokenTTL time.Duration
+	// OAuthAuthCodeTTL bounds the window between consent and exchange.
+	OAuthAuthCodeTTL time.Duration
+
+	// Client registration is necessarily open -- a remote MCP client cannot be
+	// pre-provisioned -- so these bound what an unauthenticated caller can leave
+	// behind. The rate limit caps the inflow; the sweep clears what never turned
+	// into a connection.
+	OAuthRegistrationLimit  int
+	OAuthRegistrationWindow time.Duration
+	OAuthSweepInterval      time.Duration
+	// OAuthStaleAfter is the grace period before unconsented registrations and
+	// revoked connections are swept. It must comfortably exceed the time between
+	// registering and consenting: a client swept mid-flow fails as invalid_client.
+	OAuthStaleAfter time.Duration
+
 	// Receipt scanning. ReceiptOCRURL empty disables the feature entirely: the
 	// scan endpoint returns 503 and the UI hides its button, leaving manual
 	// itemizing untouched.
@@ -43,6 +69,13 @@ type Config struct {
 	MemoryLimitBytes int64
 }
 
+// OAuthEnabled reports whether the authorization server can run. It needs both
+// a public origin to put in its metadata and a JWT secret, because consent is
+// granted by a logged-in browser session.
+func (c Config) OAuthEnabled() bool {
+	return c.PublicBaseURL != "" && c.JWTSecret != ""
+}
+
 // ReceiptScanEnabled reports whether an inference endpoint is configured.
 func (c Config) ReceiptScanEnabled() bool {
 	return c.ReceiptOCRURL != ""
@@ -61,6 +94,17 @@ func FromEnv() Config {
 	dbInterval := envDuration("DB_CONNECT_INTERVAL_MS", 500*time.Millisecond)
 	rpID := envDefault("RELYING_PARTY_ID", "localhost")
 	rpName := envDefault("RELYING_PARTY_NAME", "My Personal Budget")
+	publicBaseURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")), "/")
+	oauthAccessTTL := envDuration("OAUTH_ACCESS_TOKEN_TTL_MS", time.Hour)
+	// Long enough for a passkey prompt and a consent click, short enough that a
+	// code left in a browser history is dead by the time anyone finds it.
+	oauthCodeTTL := envDuration("OAUTH_AUTH_CODE_TTL_MS", 5*time.Minute)
+	// Twenty an hour is far above real use -- a connector is registered a handful
+	// of times ever -- and far below what would grow the table meaningfully.
+	oauthRegLimit := envInt("OAUTH_REGISTRATION_LIMIT", 20)
+	oauthRegWindow := envDuration("OAUTH_REGISTRATION_WINDOW_MS", time.Hour)
+	oauthSweepInterval := envDuration("OAUTH_SWEEP_INTERVAL_MS", time.Hour)
+	oauthStaleAfter := envDuration("OAUTH_STALE_AFTER_MS", 24*time.Hour)
 	ocrURL := strings.TrimSuffix(strings.TrimSpace(os.Getenv("RECEIPT_OCR_URL")), "/")
 	// Which inference server to talk to. llama.cpp is the default: with --jinja it
 	// applies the model's real chat template, and on identical inputs that decided
@@ -105,15 +149,23 @@ func FromEnv() Config {
 		StaticDir:         staticDir,
 		RelyingPartyID:    rpID,
 		RelyingPartyName:  rpName,
-		ReceiptOCRURL:     ocrURL,
-		ReceiptOCRAPI:     ocrAPI,
-		ReceiptOCRModel:   ocrModel,
-		ReceiptOCRToken:   ocrToken,
-		ReceiptOCRNumCtx:  ocrNumCtx,
-		ReceiptOCRTimeout: ocrTimeout,
-		ReceiptMaxEdge:    maxEdge,
-		ReceiptMaxBytes:   maxBytes,
-		MemoryLimitBytes:  memLimit,
+
+		PublicBaseURL:           publicBaseURL,
+		OAuthAccessTokenTTL:     oauthAccessTTL,
+		OAuthAuthCodeTTL:        oauthCodeTTL,
+		OAuthRegistrationLimit:  oauthRegLimit,
+		OAuthRegistrationWindow: oauthRegWindow,
+		OAuthSweepInterval:      oauthSweepInterval,
+		OAuthStaleAfter:         oauthStaleAfter,
+		ReceiptOCRURL:           ocrURL,
+		ReceiptOCRAPI:           ocrAPI,
+		ReceiptOCRModel:         ocrModel,
+		ReceiptOCRToken:         ocrToken,
+		ReceiptOCRNumCtx:        ocrNumCtx,
+		ReceiptOCRTimeout:       ocrTimeout,
+		ReceiptMaxEdge:          maxEdge,
+		ReceiptMaxBytes:         maxBytes,
+		MemoryLimitBytes:        memLimit,
 	}
 }
 

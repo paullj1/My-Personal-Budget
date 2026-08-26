@@ -85,7 +85,10 @@ export async function request<T>(
         window.dispatchEvent(new CustomEvent('mpb-unauthorized'));
         const path = window.location.pathname;
         if (path !== '/login' && path !== '/register') {
-          window.location.replace('/login');
+          // Carry the page along so an expired token does not also lose an
+          // in-flight OAuth authorization request.
+          const next = encodeURIComponent(path + window.location.search);
+          window.location.replace(`/login?next=${next}`);
         }
       }
     }

@@ -114,10 +114,10 @@ const Layout = ({ children }: PropsWithChildren) => {
               {authed && (
                 <button
                   type="button"
-                  className={`ghost ${location.pathname === '/api-keys' ? 'active' : ''}`}
-                  onClick={() => navigate('/api-keys')}
+                  className={`ghost ${location.pathname === '/connections' ? 'active' : ''}`}
+                  onClick={() => navigate('/connections')}
                 >
-                  🔑 API keys
+                  🔌 Connections
                 </button>
               )}
               {authed && (

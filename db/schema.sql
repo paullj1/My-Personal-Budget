@@ -152,3 +152,82 @@ CREATE INDEX IF NOT EXISTS index_receipt_items_on_budget_id ON receipt_items (bu
 ALTER TABLE transacts
   ADD COLUMN IF NOT EXISTS receipt_id INTEGER REFERENCES receipts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS index_transacts_on_receipt_id ON transacts (receipt_id);
+
+-- Timestamps here are TIMESTAMPTZ, unlike the legacy tables above.
+--
+-- These are the first columns this app compares against a Go-side time.Now()
+-- rather than against the database's own NOW(). A bare TIMESTAMP drops the
+-- offset and keeps the wall clock, so on a host that is not on UTC an authorization
+-- code minted five minutes ahead reads back hours in the past and every exchange
+-- fails as invalid_grant. TIMESTAMPTZ round-trips the instant instead.
+-- OAuth 2.1 authorization server, so remote MCP clients can connect without a
+-- pasted API key. Clients register themselves (RFC 7591); nothing is
+-- pre-provisioned.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id SERIAL PRIMARY KEY,
+  client_id TEXT NOT NULL UNIQUE,
+  -- Null for public clients, which is what MCP clients using PKCE are.
+  client_secret_hash TEXT,
+  client_name VARCHAR NOT NULL DEFAULT '',
+  client_uri VARCHAR NOT NULL DEFAULT '',
+  logo_uri VARCHAR NOT NULL DEFAULT '',
+  redirect_uris JSONB NOT NULL DEFAULT '[]'::jsonb,
+  grant_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+  response_types JSONB NOT NULL DEFAULT '[]'::jsonb,
+  token_endpoint_auth_method VARCHAR NOT NULL DEFAULT 'none',
+  scope VARCHAR NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- One row per (user, client) consent: the "connection" the UI lists and can
+-- disconnect. expires_at NULL means the connection does not expire on its own,
+-- which is the default; revoking is an explicit act.
+CREATE TABLE IF NOT EXISTS oauth_authorizations (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+  scope VARCHAR NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS index_oauth_authorizations_on_user_client
+  ON oauth_authorizations (user_id, client_id);
+
+-- Authorization codes are single-use and short-lived. Only the hash is stored,
+-- for the same reason api_keys stores only a hash.
+CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+  id SERIAL PRIMARY KEY,
+  code_hash TEXT NOT NULL UNIQUE,
+  authorization_id INTEGER NOT NULL REFERENCES oauth_authorizations(id) ON DELETE CASCADE,
+  redirect_uri TEXT NOT NULL DEFAULT '',
+  code_challenge TEXT NOT NULL DEFAULT '',
+  code_challenge_method VARCHAR NOT NULL DEFAULT 'S256',
+  -- RFC 8707 resource indicator: the audience the issued token is bound to.
+  resource TEXT NOT NULL DEFAULT '',
+  scope VARCHAR NOT NULL DEFAULT '',
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS index_oauth_auth_codes_on_expires_at ON oauth_auth_codes (expires_at);
+
+-- Access and refresh tokens are opaque and stored hashed, so that disconnecting
+-- a client takes effect on the next request. A JWT could not be withdrawn.
+CREATE TABLE IF NOT EXISTS oauth_tokens (
+  id SERIAL PRIMARY KEY,
+  authorization_id INTEGER NOT NULL REFERENCES oauth_authorizations(id) ON DELETE CASCADE,
+  kind VARCHAR NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  resource TEXT NOT NULL DEFAULT '',
+  scope VARCHAR NOT NULL DEFAULT '',
+  -- Null means no expiry of its own; refresh tokens live as long as the
+  -- connection does.
+  expires_at TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS index_oauth_tokens_on_authorization_id ON oauth_tokens (authorization_id);
+CREATE INDEX IF NOT EXISTS index_oauth_tokens_on_expires_at ON oauth_tokens (expires_at);

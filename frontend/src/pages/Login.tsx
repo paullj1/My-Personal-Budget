@@ -1,6 +1,6 @@
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { persistToken, request } from '../api/client';
 import { LoginResponse } from '../types';
@@ -8,6 +8,11 @@ import { bufferFromBase64Url, toBase64Url } from '../utils/bytes';
 
 const Login = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Where to land after signing in. Set when a protected page bounced the user
+  // here -- the OAuth consent screen in particular, which cannot be re-derived
+  // once its request id is lost.
+  const next = new URLSearchParams(location.search).get('next');
 
   const passkeyLogin = useMutation({
     mutationFn: async () => {
@@ -78,7 +83,7 @@ const Login = () => {
         }
       });
       persistToken(finish.token);
-      navigate('/dashboard');
+      navigate(next && next.startsWith('/') ? next : '/dashboard', { replace: true });
     }
   });
 

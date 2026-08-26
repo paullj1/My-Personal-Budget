@@ -3,7 +3,8 @@ import { Route, Routes, Navigate, useLocation, useNavigate } from 'react-router-
 
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
-import APIKeys from './pages/APIKeys';
+import Connections from './pages/Connections';
+import OAuthConsent from './pages/OAuthConsent';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import { hasAuthToken } from './api/client';
@@ -40,7 +41,13 @@ const App = () => {
       <Routes>
         <Route path="/" element={<Navigate to={authed ? '/dashboard' : '/login'} replace />} />
         <Route path="/dashboard" element={requireAuth(<Dashboard />)} />
-        <Route path="/api-keys" element={requireAuth(<APIKeys />)} />
+        <Route path="/connections" element={requireAuth(<Connections />)} />
+        {/* The page moved and was renamed; old bookmarks still land somewhere. */}
+        <Route path="/api-keys" element={<Navigate to="/connections" replace />} />
+        {/* Not wrapped in requireAuth: the consent page has to keep the
+            authorization request across the login round trip, which a bare
+            redirect to /login would drop. */}
+        <Route path="/oauth/consent" element={<OAuthConsent />} />
         <Route path="/login" element={authed ? <Navigate to="/dashboard" replace /> : <Login />} />
         <Route path="/register" element={authed ? <Navigate to="/dashboard" replace /> : <Register />} />
         <Route path="*" element={<div className="card">Not found</div>} />

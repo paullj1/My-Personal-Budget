@@ -138,10 +138,17 @@ func (h *APIHandler) index(w http.ResponseWriter, r *http.Request) {
 		"message": "Go API for My Personal Budget",
 		"version": "v1",
 		"time":    time.Now().UTC(),
-		// The UI reads this to decide whether to offer receipt scanning.
+		// The UI reads this to decide whether to offer receipt scanning, and
+		// whether the Connections screen has an OAuth half to show.
 		"features": map[string]any{
 			"receipt_scan": h.extractor != nil,
+			"oauth":        h.cfg.OAuthEnabled(),
 		},
+	}
+	if h.cfg.OAuthEnabled() {
+		// The address a remote client is pointed at. Shown on the Connections
+		// screen so it does not have to be assembled by hand.
+		resp["mcp_url"] = h.cfg.PublicBaseURL + MCPResourcePath
 	}
 	respondJSON(w, http.StatusOK, resp)
 }

@@ -12,6 +12,7 @@ import (
 
 	"my-personal-budget/internal/config"
 	"my-personal-budget/internal/database"
+	"my-personal-budget/internal/oauthsweep"
 	"my-personal-budget/internal/payroll"
 	"my-personal-budget/internal/server"
 	"my-personal-budget/internal/store"
@@ -52,6 +53,17 @@ func main() {
 	bgCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	payroll.StartScheduler(bgCtx, store, log.Default())
+	if cfg.OAuthEnabled() {
+		// Open registration needs something clearing up after it; see
+		// store.PurgeStaleOAuth.
+		oauthsweep.StartScheduler(bgCtx, store, log.Default(), oauthsweep.Options{
+			Interval: cfg.OAuthSweepInterval,
+			Retain:   cfg.OAuthStaleAfter,
+		})
+		log.Printf("OAuth enabled: issuer=%s registration limit=%d/%s sweep=%s (stale after %s)",
+			cfg.PublicBaseURL, cfg.OAuthRegistrationLimit, cfg.OAuthRegistrationWindow,
+			cfg.OAuthSweepInterval, cfg.OAuthStaleAfter)
+	}
 
 	router := server.NewRouter(cfg, store)
 

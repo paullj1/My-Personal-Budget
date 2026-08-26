@@ -18,6 +18,10 @@ const (
 
 	// apiPrefix is where the versioned API is mounted.
 	apiPrefix = "/api/v1"
+
+	// protectedResourceMetadataPath is fixed by RFC 9728; clients look here
+	// after a 401 from /mcp.
+	protectedResourceMetadataPath = "/.well-known/oauth-protected-resource"
 )
 
 // scanFullPath is the absolute path of the scan endpoint, derived from the
@@ -42,10 +46,45 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 	mux.Handle("/api/v1/auth/passkeys/login/begin", api.PasskeyLoginBeginHandler())
 	mux.Handle("/api/v1/auth/passkeys/login/finish", api.PasskeyLoginFinishHandler())
 
+	// The OAuth authorization server, when a public origin is configured. It
+	// cannot name itself from a request -- a spoofed Host header would rewrite the
+	// advertised issuer -- so an explicit public origin is what enables it.
+	var oauthHandler *handlers.OAuthHandler
+	if cfg.OAuthEnabled() {
+		oauthHandler = handlers.NewOAuthHandler(cfg, store)
+
+		mux.HandleFunc(protectedResourceMetadataPath, oauthHandler.ProtectedResourceMetadata)
+		// Clients built against RFC 9728's path-insertion rule look for the
+		// resource's own path appended, so /mcp is served alongside the bare form.
+		mux.HandleFunc(protectedResourceMetadataPath+handlers.MCPResourcePath, oauthHandler.ProtectedResourceMetadata)
+		mux.HandleFunc("/.well-known/oauth-authorization-server", oauthHandler.AuthorizationServerMetadata)
+		// Registration is the one endpoint an unauthenticated caller can use to
+		// write a row, so it is the one that needs a cap. See middleware.RateLimit
+		// for why the cap is global rather than per-address.
+		mux.Handle("/oauth/register", middleware.RateLimit(
+			cfg.OAuthRegistrationLimit, cfg.OAuthRegistrationWindow,
+			http.HandlerFunc(oauthHandler.Register)))
+		mux.HandleFunc("/oauth/authorize", oauthHandler.Authorize)
+		mux.HandleFunc("/oauth/token", oauthHandler.Token)
+		mux.HandleFunc("/oauth/revoke", oauthHandler.Revoke)
+	} else {
+		log.Print("OAuth disabled: set PUBLIC_BASE_URL and JWT_SECRET to let web clients connect to /mcp")
+	}
+
 	mcp := handlers.NewMCPHandler(store)
 	mux.Handle("/mcp", middleware.APIKeyAuth(store, mcp))
 
-	protected := http.StripPrefix("/api/v1", api.Router())
+	apiMux := http.NewServeMux()
+	apiMux.Handle("/", api.Router())
+	if oauthHandler != nil {
+		// Consent and connection management ride the JWT-protected API, because
+		// both are the logged-in user acting in their own browser.
+		apiMux.Handle("/oauth/consent", oauthHandler.ConsentHandler())
+		apiMux.Handle("/connections", oauthHandler.ConnectionsHandler())
+		apiMux.Handle("/connections/", oauthHandler.ConnectionsHandler())
+	}
+
+	protected := http.StripPrefix("/api/v1", apiMux)
 	if cfg.JWTSecret != "" {
 		protected = middleware.JWTAuth(cfg.JWTSecret, protected)
 	} else if cfg.APIToken != "" {
@@ -66,9 +105,9 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 		handler = withRouteTimeouts(handler, "", 0, defaultHandlerTimeout)
 	}
 	handler = requestLogger(handler)
-	if len(cfg.AllowedOrigins) > 0 {
-		handler = withCORS(handler, cfg.AllowedOrigins)
-	}
+	// Applied unconditionally: OAuth discovery and /mcp are cross-origin by
+	// nature, and the wrapper is inert on a request with no Origin header.
+	handler = withCORS(handler, cfg.AllowedOrigins)
 
 	log.Printf("Allowed origins: %v", cfg.AllowedOrigins)
 	return handler

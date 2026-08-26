@@ -781,3 +781,23 @@ button:disabled {
     align-items: flex-start;
   }
 }
+
+.key-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.key-row__expiry {
+  display: grid;
+  gap: 4px;
+}
+
+.key-row__expiry select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+}

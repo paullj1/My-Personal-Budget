@@ -38,6 +38,28 @@ func requestLogger(next http.Handler) http.Handler {
 	})
 }
 
+// publicCORSPaths are reachable from any origin.
+//
+// The OAuth discovery documents and the endpoints a remote client drives are
+// public by design: metadata carries no secrets, and every other request here
+// authenticates with an explicit Authorization header rather than a cookie. With
+// no ambient credential to borrow, an allow-list buys nothing and would instead
+// mean naming every client origin -- claude.ai today, something else tomorrow --
+// in CORS_ALLOWED_ORIGINS before the connector could even be discovered.
+func publicCORSPath(path string) bool {
+	switch path {
+	case "/mcp",
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-protected-resource/mcp",
+		"/.well-known/oauth-authorization-server",
+		"/oauth/register",
+		"/oauth/token",
+		"/oauth/revoke":
+		return true
+	}
+	return false
+}
+
 func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, origin := range allowedOrigins {
@@ -46,19 +68,21 @@ func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if _, ok := allowed["*"]; ok && origin != "" {
+		_, wildcard := allowed["*"]
+		_, listed := allowed[origin]
+		if origin != "" && (wildcard || listed || publicCORSPath(r.URL.Path)) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-		} else if origin != "" {
-			if _, ok := allowed[origin]; ok {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Vary", "Origin")
-			}
+			// WWW-Authenticate carries the resource_metadata pointer that starts
+			// OAuth discovery. A browser client that cannot read it off the 401 has
+			// no way to find the authorization server.
+			w.Header().Set("Access-Control-Expose-Headers", "WWW-Authenticate, Mcp-Session-Id, MCP-Protocol-Version")
 		}
 
 		if r.Method == http.MethodOptions {
 			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Last-Event-ID")
+			w.Header().Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

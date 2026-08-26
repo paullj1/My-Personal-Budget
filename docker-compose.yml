@@ -15,10 +15,22 @@ services:
     environment:
       PORT: 8080
       DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${BUDGETPASS:-budgetpass}@db:5432/${BUDGET_DB:-budget}?sslmode=disable}
-      CORS_ALLOWED_ORIGINS: http://localhost:8080
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:8080}
       API_TOKEN: ${API_TOKEN:-}
       JWT_SECRET: ${JWT_SECRET:-}
       STATIC_DIR: /app/static
+      # Passkeys: must be the hostname users register from.
+      RELYING_PARTY_ID: ${RELYING_PARTY_ID:-localhost}
+      RELYING_PARTY_NAME: ${RELYING_PARTY_NAME:-My Personal Budget}
+      # The public origin remote MCP clients reach this server on, e.g.
+      # https://budget.example.com. Empty disables the OAuth authorization server;
+      # API keys keep working. It cannot be inferred from a request, because a
+      # spoofed Host header would then rewrite the advertised issuer.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      OAUTH_REGISTRATION_LIMIT: ${OAUTH_REGISTRATION_LIMIT:-20}
+      OAUTH_REGISTRATION_WINDOW_MS: ${OAUTH_REGISTRATION_WINDOW_MS:-3600000}
+      OAUTH_SWEEP_INTERVAL_MS: ${OAUTH_SWEEP_INTERVAL_MS:-3600000}
+      OAUTH_STALE_AFTER_MS: ${OAUTH_STALE_AFTER_MS:-86400000}
     depends_on:
       - db
     ports:

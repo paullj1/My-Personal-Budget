@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,5 +91,81 @@ func TestScanFullPathMatchesTheHandler(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, scanFullPath, nil))
 	if !long {
 		t.Error("the scan path did not receive the long deadline")
+	}
+}
+
+func TestPublicCORSPathCoversTheOAuthBootstrap(t *testing.T) {
+	// A remote client discovers this server from an origin nobody configured in
+	// CORS_ALLOWED_ORIGINS, so these paths have to answer any origin.
+	for _, path := range []string{
+		"/mcp",
+		"/.well-known/oauth-protected-resource",
+		"/.well-known/oauth-protected-resource/mcp",
+		"/.well-known/oauth-authorization-server",
+		"/oauth/register",
+		"/oauth/token",
+		"/oauth/revoke",
+	} {
+		if !publicCORSPath(path) {
+			t.Fatalf("%s should be reachable cross-origin", path)
+		}
+	}
+	// The first-party API is not in that set.
+	for _, path := range []string{"/api/v1/budgets", "/api/v1/connections", "/oauth/consent"} {
+		if publicCORSPath(path) {
+			t.Fatalf("%s should not be open to every origin", path)
+		}
+	}
+}
+
+func TestWithCORSExposesTheAuthenticateChallenge(t *testing.T) {
+	handler := withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}), nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Origin", "https://claude.ai")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://claude.ai" {
+		t.Fatalf("Access-Control-Allow-Origin: got %q", got)
+	}
+	// Without this the browser hides the header that names the authorization server.
+	if got := rr.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "WWW-Authenticate") {
+		t.Fatalf("Access-Control-Expose-Headers: got %q", got)
+	}
+}
+
+func TestWithCORSStillRestrictsTheFirstPartyAPI(t *testing.T) {
+	handler := withCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), []string{"https://budget.example"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/budgets", nil)
+	req.Header.Set("Origin", "https://evil.example")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("an unlisted origin was allowed on the API: %q", got)
+	}
+}
+
+func TestWithCORSPreflightAllowsMCPHeaders(t *testing.T) {
+	handler := withCORS(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("preflight reached the inner handler")
+	}), nil)
+
+	req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
+	req.Header.Set("Origin", "https://claude.ai")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	allowed := rr.Header().Get("Access-Control-Allow-Headers")
+	for _, header := range []string{"Authorization", "MCP-Protocol-Version", "Mcp-Session-Id"} {
+		if !strings.Contains(allowed, header) {
+			t.Fatalf("preflight does not allow %s: %q", header, allowed)
+		}
 	}
 }
