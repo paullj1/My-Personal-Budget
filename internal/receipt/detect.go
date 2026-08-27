@@ -51,6 +51,28 @@ const (
 	// it were paper. Paper on a darker surface separates far more strongly than 24
 	// levels, so this rejects texture without rejecting real receipts.
 	minContrast = 24.0
+
+	// A rectangle covering essentially the whole frame leaves no background to
+	// compare against, so its contrast is undefined rather than low. Measured on a
+	// Lowe's receipt shot on brushed steel: the bright component ran to every edge,
+	// rectContrast sampled zero outside pixels and dutifully returned 0, which the
+	// contrast guard then reported as "not bright enough". Naming the real problem
+	// keeps that from being diagnosed as a lighting fault.
+	maxRectCoverage = 0.98
+
+	// Second pass. Paper is locally smooth; brushed metal, foliage, woodgrain and
+	// fabric are not. On the steel-countertop photo the paper and the counter were
+	// within ~16 grey levels of each other -- Otsu merged them into one component
+	// that filled the frame -- but their local variance differed sharply, and
+	// requiring smoothness recovered the receipt's true outline.
+	maxSmoothStdDev = 10.0
+	smoothRadius    = 2
+
+	// The second pass may accept less separation because smoothness has already
+	// established the candidate is paper-like, doing the work contrast does in the
+	// first pass. It is not a blanket loosening: this runs only after the first
+	// pass has declined, where the alternative is not cropping at all.
+	minContrastSmooth = 12.0
 )
 
 // DetectInfo reports what detection concluded, so the result is explainable and
@@ -62,7 +84,13 @@ type DetectInfo struct {
 	AngleDegrees float64 `json:"angle_degrees,omitempty"`
 	Fill         float64 `json:"fill,omitempty"`
 	Contrast     float64 `json:"contrast,omitempty"`
-	Reason       string  `json:"reason,omitempty"`
+	// RectCoverage is the candidate rectangle's share of the frame. A value near
+	// 1 means there was no background left to measure contrast against.
+	RectCoverage float64 `json:"rect_coverage,omitempty"`
+	// Smooth reports that the crop came from the texture-based second pass, so a
+	// surprising result can be traced to the pass that produced it.
+	Smooth bool   `json:"smooth,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type point struct{ X, Y float64 }
@@ -90,10 +118,41 @@ func DetectDocument(img image.Image) (rotRect, DetectInfo, bool) {
 	total := gb.Dx() * gb.Dy()
 
 	threshold := otsuThreshold(gray)
-	mask := make([]bool, total)
+	bright := make([]bool, total)
 	for i, v := range gray.Pix {
-		mask[i] = v > threshold
+		bright[i] = v > threshold
 	}
+
+	// First pass: brightness alone, which is what a receipt on a darker surface
+	// needs and nothing more.
+	rect, info, ok := evaluateMask(gray, bright, minContrast)
+	if ok {
+		return finalizeRect(rect, info, scale, b)
+	}
+
+	// Second pass: brightness and smoothness together. Only reached when the
+	// first pass declined, so the fallback it replaces is the uncropped frame.
+	sd := localStdDev(gray, smoothRadius)
+	smooth := make([]bool, total)
+	for i := range bright {
+		smooth[i] = bright[i] && sd[i] < maxSmoothStdDev
+	}
+	if rect2, info2, ok2 := evaluateMask(gray, smooth, minContrastSmooth); ok2 {
+		info2.Smooth = true
+		return finalizeRect(rect2, info2, scale, b)
+	}
+
+	// Report the first pass's reason: it describes the primary path, and the
+	// second pass only ever runs after it has already failed.
+	return rotRect{}, info, false
+}
+
+// evaluateMask turns one binary mask into a candidate rectangle and applies every
+// plausibility guard. Splitting it out lets the two passes share exactly the same
+// shape reasoning, so they cannot drift apart.
+func evaluateMask(gray *image.Gray, mask []bool, contrastFloor float64) (rotRect, DetectInfo, bool) {
+	gb := gray.Bounds()
+	total := gb.Dx() * gb.Dy()
 
 	pts, area := largestComponent(mask, gb.Dx(), gb.Dy())
 	if len(pts) < 16 {
@@ -123,6 +182,7 @@ func DetectDocument(img image.Image) (rotRect, DetectInfo, bool) {
 
 	info.Aspect = rect.Long / rect.Short
 	info.Fill = float64(area) / (rect.Long * rect.Short)
+	info.RectCoverage = (rect.Long * rect.Short) / float64(total)
 	info.AngleDegrees = math.Atan2(rect.U.Y, rect.U.X) * 180 / math.Pi
 
 	if info.Aspect < minRectAspect || info.Aspect > maxRectAspect {
@@ -133,14 +193,24 @@ func DetectDocument(img image.Image) (rotRect, DetectInfo, bool) {
 		info.Reason = "bright region is not rectangular"
 		return rotRect{}, info, false
 	}
-
-	info.Contrast = rectContrast(gray, rect)
-	if info.Contrast < minContrast {
-		info.Reason = "candidate is not bright enough against its surroundings"
+	// Checked before contrast: with no background left, contrast is undefined,
+	// and reporting it as "not bright enough" sends you looking at the lighting.
+	if info.RectCoverage > maxRectCoverage {
+		info.Reason = "candidate rectangle fills the frame; nothing to crop"
 		return rotRect{}, info, false
 	}
 
-	// Back to full-resolution coordinates, with a little breathing room.
+	info.Contrast = rectContrast(gray, rect)
+	if info.Contrast < contrastFloor {
+		info.Reason = "candidate is not bright enough against its surroundings"
+		return rotRect{}, info, false
+	}
+	return rect, info, true
+}
+
+// finalizeRect maps a rectangle from analysis coordinates back to the original
+// image, with a little breathing room so the outermost characters are not clipped.
+func finalizeRect(rect rotRect, info DetectInfo, scale float64, b image.Rectangle) (rotRect, DetectInfo, bool) {
 	inv := 1 / scale
 	rect.Center = point{
 		X: rect.Center.X*inv + float64(b.Min.X),
@@ -151,6 +221,49 @@ func DetectDocument(img image.Image) (rotRect, DetectInfo, bool) {
 
 	info.Detected = true
 	return rect, info, true
+}
+
+// localStdDev measures texture in a small window around each pixel. Paper reads
+// low even where it is printed; a brushed or woven surface reads high.
+//
+// Computed with a summed-area table so the cost does not grow with the window:
+// the naive form is O(r^2) per pixel and this runs on every scan.
+func localStdDev(g *image.Gray, radius int) []float64 {
+	gb := g.Bounds()
+	w, h := gb.Dx(), gb.Dy()
+
+	// Integral images of v and v^2, offset by one row/column so the sum over any
+	// rectangle is four lookups.
+	sum := make([]float64, (w+1)*(h+1))
+	sumSq := make([]float64, (w+1)*(h+1))
+	for y := 0; y < h; y++ {
+		var rowSum, rowSumSq float64
+		for x := 0; x < w; x++ {
+			v := float64(g.Pix[y*g.Stride+x])
+			rowSum += v
+			rowSumSq += v * v
+			sum[(y+1)*(w+1)+x+1] = sum[y*(w+1)+x+1] + rowSum
+			sumSq[(y+1)*(w+1)+x+1] = sumSq[y*(w+1)+x+1] + rowSumSq
+		}
+	}
+	boxSum := func(t []float64, x0, y0, x1, y1 int) float64 {
+		return t[y1*(w+1)+x1] - t[y0*(w+1)+x1] - t[y1*(w+1)+x0] + t[y0*(w+1)+x0]
+	}
+
+	out := make([]float64, w*h)
+	for y := 0; y < h; y++ {
+		y0 := max(0, y-radius)
+		y1 := min(h, y+radius+1)
+		for x := 0; x < w; x++ {
+			x0 := max(0, x-radius)
+			x1 := min(w, x+radius+1)
+			n := float64((x1 - x0) * (y1 - y0))
+			mean := boxSum(sum, x0, y0, x1, y1) / n
+			variance := boxSum(sumSq, x0, y0, x1, y1)/n - mean*mean
+			out[y*w+x] = math.Sqrt(math.Max(0, variance))
+		}
+	}
+	return out
 }
 
 // grayDownscale produces a small 8-bit copy for analysis and the scale factor
