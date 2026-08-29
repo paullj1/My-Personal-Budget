@@ -281,8 +281,20 @@ func (h *OAuthHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 
 	challenge := strings.TrimSpace(q.Get("code_challenge"))
 	method := strings.TrimSpace(q.Get("code_challenge_method"))
-	if challenge == "" {
-		redirectWithError(w, r, redirectURI, state, "invalid_request", "code_challenge is required")
+	// PKCE is mandatory for a public client, because nothing else binds the code
+	// to whoever asked for it -- there is no secret to prove identity with at the
+	// token endpoint. A confidential client has that secret, which is the
+	// protection OAuth 2.0 was built around, so PKCE is defence in depth there
+	// rather than the only defence.
+	//
+	// Requiring it from everyone locks out Home Assistant, whose MCP integration
+	// goes through application_credentials -> AuthImplementation, a subclass of
+	// LocalOAuth2Implementation that sends no code_challenge at all. It would
+	// arrive with a valid client_secret and be turned away before reaching the
+	// consent screen.
+	if challenge == "" && !client.IsConfidential() {
+		redirectWithError(w, r, redirectURI, state, "invalid_request",
+			"code_challenge is required for clients without a client_secret")
 		return
 	}
 	if method != "" && method != "S256" {
@@ -492,9 +504,16 @@ func (h *OAuthHandler) exchangeCode(w http.ResponseWriter, r *http.Request, clie
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "redirect_uri does not match the authorization request")
 		return
 	}
-	if err := oauth.VerifyPKCE(granted.CodeChallenge, granted.CodeChallengeMethod, r.PostForm.Get("code_verifier")); err != nil {
-		oauthError(w, http.StatusBadRequest, "invalid_grant", "code_verifier is invalid")
-		return
+	// Verify only when the authorization request carried a challenge. A confidential
+	// client may omit PKCE, but one that used it must still satisfy it -- otherwise
+	// an attacker holding a stolen code could simply drop the verifier and be let
+	// through, which would make the protection worthless for the clients that do
+	// rely on it.
+	if granted.CodeChallenge != "" {
+		if err := oauth.VerifyPKCE(granted.CodeChallenge, granted.CodeChallengeMethod, r.PostForm.Get("code_verifier")); err != nil {
+			oauthError(w, http.StatusBadRequest, "invalid_grant", "code_verifier is invalid")
+			return
+		}
 	}
 	if resource := r.PostForm.Get("resource"); resource != "" && !sameResource(resource, granted.Resource) {
 		oauthError(w, http.StatusBadRequest, "invalid_target", "resource does not match the authorization request")

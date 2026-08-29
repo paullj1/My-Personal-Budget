@@ -35,8 +35,22 @@ type OAuthClient struct {
 	hasSecret bool
 }
 
-// IsConfidential reports whether the client registered a secret.
-func (c OAuthClient) IsConfidential() bool { return c.hasSecret }
+// IsConfidential reports whether the client authenticates at the token endpoint
+// with a secret.
+//
+// Derived from the registered auth method rather than from whether a secret hash
+// happens to exist, because this is the property callers actually depend on: a
+// client that registered as client_secret_* will be made to prove itself at the
+// token endpoint, and VerifyOAuthClientSecret refuses any client whose stored
+// hash is NULL. So claiming secret auth without having a secret cannot buy
+// anything -- the exchange still fails.
+func (c OAuthClient) IsConfidential() bool {
+	return c.TokenEndpointAuthMethod != "" && c.TokenEndpointAuthMethod != "none"
+}
+
+// HasStoredSecret reports whether a secret hash exists for this client, which is
+// a fact about the row rather than about the registration.
+func (c OAuthClient) HasStoredSecret() bool { return c.hasSecret }
 
 // OAuthClientInput is a registration request, already validated by the caller.
 type OAuthClientInput struct {

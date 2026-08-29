@@ -833,3 +833,126 @@ func TestOAuthConnectionsRequireLogin(t *testing.T) {
 func itoa(v int64) string {
 	return strconv.FormatInt(v, 10)
 }
+
+// registerConfidentialClient registers a client that authenticates with a secret,
+// as Home Assistant's application_credentials flow does.
+func registerConfidentialClient(t *testing.T, h *OAuthHandler, redirectURI string) (string, string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"client_name":                "Home Assistant",
+		"redirect_uris":              []string{redirectURI},
+		"grant_types":                []string{"authorization_code", "refresh_token"},
+		"response_types":             []string{"code"},
+		"token_endpoint_auth_method": "client_secret_post",
+	})
+	rr := httptest.NewRecorder()
+	h.Register(rr, httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(string(body))))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("register: %d %s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	secret, _ := out["client_secret"].(string)
+	if secret == "" {
+		t.Fatal("a confidential client must be issued a secret")
+	}
+	return out["client_id"].(string), secret
+}
+
+// Home Assistant's MCP integration uses application_credentials ->
+// AuthImplementation, a LocalOAuth2Implementation subclass that sends no
+// code_challenge. Requiring PKCE from everyone turned it away at /authorize with
+// a valid client_secret in hand.
+func TestOAuthConfidentialClientMayOmitPKCE(t *testing.T) {
+	h, _ := newOAuthFixture(t)
+	const redirectURI = "https://my.home-assistant.io/redirect/oauth"
+	clientID, secret := registerConfidentialClient(t, h, redirectURI)
+
+	query := url.Values{
+		"client_id": {clientID}, "redirect_uri": {redirectURI},
+		"response_type": {"code"}, "state": {"ha-state"},
+	}
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query.Encode(), nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("authorize: %d %s", rr.Code, rr.Body.String())
+	}
+	loc, _ := url.Parse(rr.Header().Get("Location"))
+	if loc.Path != ConsentPath {
+		t.Fatalf("expected the consent screen, got %s?%s", loc.Path, loc.RawQuery)
+	}
+
+	body, _ := json.Marshal(map[string]any{"request_id": loc.Query().Get("request_id"), "approve": true})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/oauth/consent", strings.NewReader(string(body)))
+	req = req.WithContext(auth.WithUserID(req.Context(), 12))
+	rr = httptest.NewRecorder()
+	h.ConsentHandler().ServeHTTP(rr, req)
+	var decided struct {
+		RedirectTo string `json:"redirect_to"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &decided)
+	back, _ := url.Parse(decided.RedirectTo)
+	code := back.Query().Get("code")
+	if code == "" {
+		t.Fatalf("no code returned: %s", decided.RedirectTo)
+	}
+
+	// Exchange with the secret and no code_verifier, exactly as HA does.
+	status, out := postToken(t, h, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code},
+		"client_id": {clientID}, "client_secret": {secret},
+		"redirect_uri": {redirectURI},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("token exchange failed: %d %v", status, out)
+	}
+	if out["access_token"] == nil {
+		t.Fatalf("no access token: %v", out)
+	}
+}
+
+// The relaxation is scoped to clients that have a secret. A public client still
+// has nothing else binding the code to it.
+func TestOAuthPublicClientStillRequiresPKCE(t *testing.T) {
+	h, _ := newOAuthFixture(t)
+	const redirectURI = "https://claude.ai/cb"
+	clientID := registerClient(t, h, redirectURI) // token_endpoint_auth_method: none
+
+	query := url.Values{
+		"client_id": {clientID}, "redirect_uri": {redirectURI},
+		"response_type": {"code"}, "state": {"s"},
+	}
+	rr := httptest.NewRecorder()
+	h.Authorize(rr, httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+query.Encode(), nil))
+	if rr.Code != http.StatusFound {
+		t.Fatalf("expected a redirect, got %d", rr.Code)
+	}
+	back, _ := url.Parse(rr.Header().Get("Location"))
+	if back.Query().Get("error") != "invalid_request" {
+		t.Fatalf("public client without PKCE should be refused, got %q", back.Query().Get("error"))
+	}
+}
+
+// A confidential client that DOES use PKCE must still satisfy it. Otherwise a
+// stolen code could be redeemed simply by omitting the verifier, which would
+// make the protection worthless for anyone relying on it.
+func TestOAuthConfidentialClientThatUsesPKCEMustSatisfyIt(t *testing.T) {
+	h, _ := newOAuthFixture(t)
+	const redirectURI = "https://my.home-assistant.io/redirect/oauth"
+	clientID, secret := registerConfidentialClient(t, h, redirectURI)
+	verifier := "a-verifier-long-enough-to-be-realistic-0123456789"
+
+	code, _ := authorizeAndConsent(t, h, clientID, redirectURI, pkce(verifier), 12)
+	if code == "" {
+		t.Fatal("no code")
+	}
+
+	// Dropping the verifier must not be accepted.
+	status, out := postToken(t, h, url.Values{
+		"grant_type": {"authorization_code"}, "code": {code},
+		"client_id": {clientID}, "client_secret": {secret}, "redirect_uri": {redirectURI},
+	})
+	if status != http.StatusBadRequest || out["error"] != "invalid_grant" {
+		t.Fatalf("omitting the verifier was accepted: %d %v", status, out)
+	}
+}
