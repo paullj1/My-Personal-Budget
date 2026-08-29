@@ -169,3 +169,82 @@ func TestWithCORSPreflightAllowsMCPHeaders(t *testing.T) {
 		}
 	}
 }
+
+// A discovery probe answered with the SPA is worse than a 404: the client sees
+// 200 and tries to parse HTML as JSON. openid-configuration is the one clients
+// reach for before falling back to RFC 8414, and this server is an OAuth 2.0
+// authorization server, not an OpenID provider.
+func TestWellKnownDoesNotFallThroughToTheSPA(t *testing.T) {
+	spa := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<html>SPA</html>"))
+	})
+	h := wellKnownNotFound(spa)
+
+	for _, path := range []string{
+		"/.well-known/openid-configuration",
+		"/.well-known/oauth-authorization-server/extra",
+		"/.well-known/anything-else",
+	} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: got %d, want 404", path, rr.Code)
+		}
+		if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("%s: Content-Type %q, want application/json", path, ct)
+		}
+		if strings.Contains(rr.Body.String(), "SPA") {
+			t.Errorf("%s: fell through to the SPA", path)
+		}
+	}
+}
+
+// certbot's webroot mode writes challenges under the static directory, so that
+// one prefix has to keep reaching the file server.
+func TestWellKnownStillServesAcmeChallenges(t *testing.T) {
+	spa := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("challenge-token"))
+	})
+	rr := httptest.NewRecorder()
+	wellKnownNotFound(spa).ServeHTTP(rr,
+		httptest.NewRequest(http.MethodGet, "/.well-known/acme-challenge/abc123", nil))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("acme challenge got %d, want 200", rr.Code)
+	}
+	if rr.Body.String() != "challenge-token" {
+		t.Fatalf("acme challenge body %q", rr.Body.String())
+	}
+}
+
+// The real metadata routes must still win over the catch-all: Go's ServeMux
+// prefers the more specific pattern, and this pins that so a future reshuffle
+// cannot quietly 404 the discovery documents.
+func TestWellKnownCatchAllDoesNotShadowMetadataRoutes(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"issuer":"x"}`))
+	})
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resource":"x"}`))
+	})
+	mux.Handle("/.well-known/", wellKnownNotFound(http.NotFoundHandler()))
+
+	for _, tc := range []struct {
+		path string
+		code int
+	}{
+		{"/.well-known/oauth-authorization-server", http.StatusOK},
+		{"/.well-known/oauth-protected-resource", http.StatusOK},
+		{"/.well-known/openid-configuration", http.StatusNotFound},
+	} {
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rr.Code != tc.code {
+			t.Errorf("%s: got %d, want %d", tc.path, rr.Code, tc.code)
+		}
+	}
+}

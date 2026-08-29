@@ -3,6 +3,7 @@ package server
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"my-personal-budget/internal/config"
@@ -28,6 +29,23 @@ const (
 // handler's own constant so renaming the route cannot silently drop scans back to
 // the default deadline.
 var scanFullPath = apiPrefix + handlers.ScanPath
+
+// wellKnownNotFound answers unhandled /.well-known paths with a JSON 404.
+//
+// ACME challenges are the exception: certbot's webroot mode writes them under
+// the static directory, so those keep falling through to the file server rather
+// than being denied by a rule meant for discovery documents.
+func wellKnownNotFound(static http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/.well-known/acme-challenge/") {
+			static.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}` + "\n"))
+	})
+}
 
 // NewRouter wires HTTP routes and middleware.
 func NewRouter(cfg config.Config, store *store.Store) http.Handler {
@@ -95,6 +113,14 @@ func NewRouter(cfg config.Config, store *store.Store) http.Handler {
 	mux.Handle(apiPrefix+"/", protected)
 
 	// Serve frontend assets (SPA fallback).
+	// Anything under /.well-known that is not served above must not fall through
+	// to the SPA. A discovery probe answered with 200 text/html looks like a
+	// working endpoint returning malformed JSON, which is a far worse failure than
+	// an honest 404 -- clients probe /.well-known/openid-configuration before
+	// falling back to RFC 8414, and this server is an OAuth 2.0 authorization
+	// server, not an OpenID provider.
+	mux.Handle("/.well-known/", wellKnownNotFound(newSPAHandler(cfg.StaticDir)))
+
 	mux.Handle("/", newSPAHandler(cfg.StaticDir))
 
 	// Handler-level deadlines, so raising the server's write timeout for receipt
