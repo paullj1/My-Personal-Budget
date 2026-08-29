@@ -548,3 +548,100 @@ func TestIntegrationCommitReceiptRecordsExtractionSource(t *testing.T) {
 		}
 	}
 }
+
+// The date-range SQL is the part the in-package fakes cannot vouch for.
+func TestIntegrationListTransactionsFiltered(t *testing.T) {
+	db := openTestDB(t)
+	s := New(db)
+	userID := testUser(t, db)
+
+	var budgetID int64
+	if err := db.QueryRow(`INSERT INTO budgets (name) VALUES ('Filter Test') RETURNING id`).Scan(&budgetID); err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	t.Cleanup(func() { db.Exec(`DELETE FROM budgets WHERE id = $1`, budgetID) })
+	if _, err := db.Exec(`INSERT INTO users_budgets (user_id, budget_id) VALUES ($1, $2)`, userID, budgetID); err != nil {
+		t.Fatalf("share budget: %v", err)
+	}
+
+	mk := func(desc string, credit bool, amt float64, daysAgo int) {
+		if _, err := db.Exec(`
+			INSERT INTO transacts (budget_id, user_id, description, credit, amount, created_at, updated_at)
+			VALUES ($1,$2,$3,$4,$5, NOW() - make_interval(days => $6), NOW())`,
+			budgetID, userID, desc, credit, amt, daysAgo); err != nil {
+			t.Fatalf("insert %s: %v", desc, err)
+		}
+	}
+	mk("Coffee", false, 4.25, 40)
+	mk("Groceries", false, 42.50, 10)
+	mk("Payday", true, 1000, 5)
+	mk("Book", false, 15.00, 1)
+
+	ctx := context.Background()
+
+	// No filter: everything, newest first, with totals.
+	all, sum, err := s.ListTransactionsFiltered(ctx, budgetID, &userID, TransactionFilter{})
+	if err != nil {
+		t.Fatalf("unfiltered: %v", err)
+	}
+	if len(all) != 4 || sum.Count != 4 {
+		t.Fatalf("expected 4, got %d (summary %d)", len(all), sum.Count)
+	}
+	if all[0].Description != "Book" {
+		t.Fatalf("not newest-first: %s", all[0].Description)
+	}
+	if sum.CreditTotal != 1000 || sum.DebitTotal != 61.75 || sum.Net != 938.25 {
+		t.Fatalf("totals wrong: %+v", sum)
+	}
+
+	// Date range excludes the 40-day-old row.
+	from := time.Now().AddDate(0, 0, -20)
+	ranged, rsum, err := s.ListTransactionsFiltered(ctx, budgetID, &userID, TransactionFilter{From: &from})
+	if err != nil {
+		t.Fatalf("ranged: %v", err)
+	}
+	if len(ranged) != 3 {
+		t.Fatalf("expected 3 in range, got %d", len(ranged))
+	}
+	if rsum.DebitTotal != 57.50 {
+		t.Fatalf("range totals should exclude the old row: %+v", rsum)
+	}
+
+	// A closed window on both ends.
+	lo, hi := time.Now().AddDate(0, 0, -12), time.Now().AddDate(0, 0, -3)
+	win, _, err := s.ListTransactionsFiltered(ctx, budgetID, &userID, TransactionFilter{From: &lo, To: &hi})
+	if err != nil {
+		t.Fatalf("window: %v", err)
+	}
+	if len(win) != 2 {
+		t.Fatalf("expected 2 inside the window, got %d", len(win))
+	}
+
+	// Search is case-insensitive on the description.
+	found, _, err := s.ListTransactionsFiltered(ctx, budgetID, &userID, TransactionFilter{Search: "groc"})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(found) != 1 || found[0].Description != "Groceries" {
+		t.Fatalf("search returned %+v", found)
+	}
+
+	// A limit that cuts the range says so, rather than passing off a partial sum
+	// as a complete one.
+	cut, csum, err := s.ListTransactionsFiltered(ctx, budgetID, &userID, TransactionFilter{Limit: 2})
+	if err != nil {
+		t.Fatalf("limited: %v", err)
+	}
+	if len(cut) != 2 || !csum.Truncated {
+		t.Fatalf("expected 2 rows and truncated=true, got %d %+v", len(cut), csum)
+	}
+	if csum.Count != 2 {
+		t.Fatalf("summary count should match rows returned: %+v", csum)
+	}
+
+	// Access is still enforced.
+	other := testUser(t, db)
+	if _, _, err := s.ListTransactionsFiltered(ctx, budgetID, &other, TransactionFilter{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a user without access got %v, want ErrNotFound", err)
+	}
+}

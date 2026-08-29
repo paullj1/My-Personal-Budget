@@ -398,6 +398,102 @@ func (s *Store) ListTransactionsPaged(ctx context.Context, budgetID int64, userI
 	return txns, rows.Err()
 }
 
+// TransactionFilter narrows a listing. A nil From or To is an open end, so
+// "everything since March" and "the last 20" are both expressible without a
+// second method.
+type TransactionFilter struct {
+	Limit  int
+	From   *time.Time
+	To     *time.Time
+	Search string
+}
+
+// TransactionSummary totals a filtered listing, so a caller asking "what
+// happened last month" gets the answer rather than a page of rows to add up.
+//
+// Sums are computed over the rows returned, which means a Limit that truncates
+// the range also truncates the totals. Truncated says so explicitly rather than
+// leaving a partial sum to be read as a full one.
+type TransactionSummary struct {
+	Count       int     `json:"count"`
+	CreditTotal float64 `json:"credit_total"`
+	DebitTotal  float64 `json:"debit_total"`
+	Net         float64 `json:"net"`
+	Truncated   bool    `json:"truncated"`
+}
+
+// ListTransactionsFiltered returns transactions for a budget, newest first,
+// narrowed by date range and/or a description search.
+func (s *Store) ListTransactionsFiltered(ctx context.Context, budgetID int64, userID *int64, f TransactionFilter) ([]Transaction, TransactionSummary, error) {
+	if err := s.ensureBudgetAccess(ctx, budgetID, userID); err != nil {
+		return nil, TransactionSummary{}, err
+	}
+	limit := f.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	args := []any{budgetID}
+	where := "budget_id = $1"
+	if f.From != nil {
+		args = append(args, *f.From)
+		where += fmt.Sprintf(" AND created_at >= $%d", len(args))
+	}
+	if f.To != nil {
+		args = append(args, *f.To)
+		where += fmt.Sprintf(" AND created_at <= $%d", len(args))
+	}
+	if strings.TrimSpace(f.Search) != "" {
+		args = append(args, "%"+strings.TrimSpace(f.Search)+"%")
+		where += fmt.Sprintf(" AND description ILIKE $%d", len(args))
+	}
+	// One row over the limit, so a truncated range can be reported as truncated
+	// instead of silently returning a partial total.
+	args = append(args, limit+1)
+
+	query := fmt.Sprintf(`
+		SELECT id, budget_id, user_id, description, credit, amount, created_at, updated_at
+		FROM transacts
+		WHERE %s
+		ORDER BY created_at DESC, id DESC
+		LIMIT $%d;
+	`, where, len(args))
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, TransactionSummary{}, err
+	}
+	defer rows.Close()
+
+	txns := make([]Transaction, 0, limit)
+	for rows.Next() {
+		var t Transaction
+		if err := rows.Scan(&t.ID, &t.BudgetID, &t.UserID, &t.Description, &t.Credit, &t.Amount, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, TransactionSummary{}, err
+		}
+		txns = append(txns, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, TransactionSummary{}, err
+	}
+
+	var sum TransactionSummary
+	if len(txns) > limit {
+		sum.Truncated = true
+		txns = txns[:limit]
+	}
+	for _, t := range txns {
+		if t.Credit {
+			sum.CreditTotal += t.Amount
+		} else {
+			sum.DebitTotal += t.Amount
+		}
+	}
+	sum.Count = len(txns)
+	sum.Net = sum.CreditTotal - sum.DebitTotal
+	return txns, sum, nil
+}
+
 func (s *Store) CreateTransaction(ctx context.Context, budgetID int64, userID *int64, description string, credit bool, amount float64) (Transaction, error) {
 	if amount <= 0 {
 		return Transaction{}, fmt.Errorf("amount must be > 0")

@@ -39,6 +39,7 @@ type MCPHandler struct {
 type MCPStore interface {
 	ListBudgets(ctx context.Context, userID *int64) ([]store.Budget, error)
 	CreateTransaction(ctx context.Context, budgetID int64, userID *int64, description string, credit bool, amount float64) (store.Transaction, error)
+	ListTransactionsFiltered(ctx context.Context, budgetID int64, userID *int64, f store.TransactionFilter) ([]store.Transaction, store.TransactionSummary, error)
 	SuggestBudgets(ctx context.Context, userID *int64, keys []string) (map[string]int64, error)
 	CommitReceipt(ctx context.Context, userID *int64, in store.ReceiptInput) (store.CommitReceiptResult, error)
 }
@@ -267,6 +268,44 @@ func mcpTools() []map[string]any {
 			},
 		},
 		{
+			"name": "list_transactions",
+			"description": strings.Join([]string{
+				"List transactions from a budget, newest first, with totals.",
+				"",
+				"Narrow with limit (the last N), and/or a from/to date range. Dates accept",
+				"YYYY-MM-DD or RFC 3339; a plain date in `to` covers that whole day. Both",
+				"ends are inclusive and either may be omitted for an open range.",
+				"",
+				"The reply carries credit_total, debit_total and net over the rows returned,",
+				"so a summary does not require adding them up. If more rows matched than the",
+				"limit allowed, truncated is true and the totals cover only what came back.",
+			}, "\n"),
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"budget_id": map[string]any{"type": "integer"},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "Most recent N transactions. Default 100, max 500.",
+					},
+					"from": map[string]any{
+						"type":        "string",
+						"description": "Inclusive start, YYYY-MM-DD or RFC 3339.",
+					},
+					"to": map[string]any{
+						"type":        "string",
+						"description": "Inclusive end, YYYY-MM-DD or RFC 3339. A plain date covers the whole day.",
+					},
+					"search": map[string]any{
+						"type":        "string",
+						"description": "Case-insensitive substring match on the description.",
+					},
+				},
+				"required":             []string{"budget_id"},
+				"additionalProperties": false,
+			},
+		},
+		{
 			"name":        "draft_receipt",
 			"description": draftReceiptDescription(),
 			"inputSchema": receipt.ExtractionSchema(),
@@ -332,6 +371,8 @@ func (h *MCPHandler) handleToolsCall(r *http.Request, id any, params json.RawMes
 		return h.callListBudgets(r, id, userID)
 	case "add_transaction":
 		return h.callAddTransaction(r, id, userID, payload.Arguments)
+	case "list_transactions":
+		return h.callListTransactions(r, id, userID, payload.Arguments)
 	case "draft_receipt":
 		return h.callDraftReceipt(r, id, userID, payload.Arguments)
 	case "commit_receipt":
@@ -387,6 +428,83 @@ func (h *MCPHandler) callAddTransaction(r *http.Request, id any, userID *int64, 
 		"credit":      txn.Credit,
 		"amount":      txn.Amount,
 		"created_at":  txn.CreatedAt,
+	})
+}
+
+// parseFilterDate accepts the forms a caller actually sends: a plain date, or a
+// full timestamp. endOfDay makes a bare date on the `to` side cover its whole
+// day, so "to: 2026-03-31" does not silently exclude everything after midnight.
+func parseFilterDate(raw string, endOfDay bool) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if t, err := time.ParseInLocation("2006-01-02", raw, time.Local); err == nil {
+		if endOfDay {
+			t = t.Add(24*time.Hour - time.Nanosecond)
+		}
+		return &t, nil
+	}
+	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02 15:04"} {
+		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("could not read %q as a date; use YYYY-MM-DD or RFC 3339", raw)
+}
+
+func (h *MCPHandler) callListTransactions(r *http.Request, id any, userID *int64, args json.RawMessage) mcpResponse {
+	var req struct {
+		BudgetID int64  `json:"budget_id"`
+		Limit    int    `json:"limit"`
+		From     string `json:"from"`
+		To       string `json:"to"`
+		Search   string `json:"search"`
+	}
+	if err := json.Unmarshal(args, &req); err != nil {
+		return errorResponse(id, -32602, "invalid arguments")
+	}
+	if req.BudgetID <= 0 {
+		return errorResponse(id, -32602, "budget_id is required")
+	}
+	from, err := parseFilterDate(req.From, false)
+	if err != nil {
+		return errorResponse(id, -32602, err.Error())
+	}
+	to, err := parseFilterDate(req.To, true)
+	if err != nil {
+		return errorResponse(id, -32602, err.Error())
+	}
+	if from != nil && to != nil && to.Before(*from) {
+		return errorResponse(id, -32602, "to is earlier than from")
+	}
+
+	txns, sum, err := h.store.ListTransactionsFiltered(r.Context(), req.BudgetID, userID, store.TransactionFilter{
+		Limit: req.Limit, From: from, To: to, Search: req.Search,
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		return errorResponse(id, -32004, "budget not found")
+	}
+	if err != nil {
+		log.Printf("mcp list_transactions: %v", err)
+		return errorResponse(id, -32000, "failed to list transactions")
+	}
+
+	type txnOut struct {
+		ID          int64     `json:"id"`
+		Description string    `json:"description"`
+		Credit      bool      `json:"credit"`
+		Amount      float64   `json:"amount"`
+		CreatedAt   time.Time `json:"created_at"`
+	}
+	out := make([]txnOut, 0, len(txns))
+	for _, t := range txns {
+		out = append(out, txnOut{t.ID, t.Description, t.Credit, t.Amount, t.CreatedAt})
+	}
+	return toolResult(id, map[string]any{
+		"budget_id":    req.BudgetID,
+		"summary":      sum,
+		"transactions": out,
 	})
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"my-personal-budget/internal/auth"
 	"my-personal-budget/internal/receipt"
@@ -386,4 +387,124 @@ func TestMCPToolsRequireAuthentication(t *testing.T) {
 	if resp.Error == nil || resp.Error.Code != -32001 {
 		t.Fatalf("expected an unauthorized error, got %#v", resp.Error)
 	}
+}
+
+func TestMCPListTransactionsFilters(t *testing.T) {
+	base := time.Date(2026, 3, 15, 12, 0, 0, 0, time.Local)
+	fs := &fakeStore{filteredTxns: []store.Transaction{
+		{ID: 3, Description: "Groceries", Credit: false, Amount: 42.50, CreatedAt: base},
+		{ID: 2, Description: "Payday", Credit: true, Amount: 1000, CreatedAt: base.AddDate(0, 0, -1)},
+		{ID: 1, Description: "Coffee", Credit: false, Amount: 4.25, CreatedAt: base.AddDate(0, 0, -2)},
+	}}
+	h := NewMCPHandler(fs)
+
+	payload := toolPayload(t, toolCall(t, h, 1, "list_transactions", map[string]any{
+		"budget_id": 7, "limit": 50, "from": "2026-03-01", "to": "2026-03-31", "search": "o",
+	}))
+
+	if got := payload["budget_id"].(float64); got != 7 {
+		t.Fatalf("budget_id: got %v", got)
+	}
+	txns := payload["transactions"].([]any)
+	if len(txns) != 3 {
+		t.Fatalf("expected 3 transactions, got %d", len(txns))
+	}
+
+	// Totals come back with the rows, so a caller summarising activity does not
+	// have to add them up (and cannot get it wrong).
+	sum := payload["summary"].(map[string]any)
+	if sum["credit_total"].(float64) != 1000 {
+		t.Fatalf("credit_total: got %v", sum["credit_total"])
+	}
+	if sum["debit_total"].(float64) != 46.75 {
+		t.Fatalf("debit_total: got %v", sum["debit_total"])
+	}
+	if sum["net"].(float64) != 953.25 {
+		t.Fatalf("net: got %v", sum["net"])
+	}
+
+	// The filter must reach the store rather than being applied after the fact.
+	f := fs.txnFilter
+	if f == nil {
+		t.Fatal("no filter reached the store")
+	}
+	if f.Limit != 50 || f.Search != "o" {
+		t.Fatalf("limit/search not passed through: %+v", f)
+	}
+	if f.From == nil || f.From.Format("2006-01-02") != "2026-03-01" {
+		t.Fatalf("from: got %v", f.From)
+	}
+	// A bare date on `to` has to cover the whole day, or the last day of a range
+	// silently returns nothing after midnight.
+	if f.To == nil || f.To.Format("2006-01-02 15:04") != "2026-03-31 23:59" {
+		t.Fatalf("to should span the full day, got %v", f.To)
+	}
+}
+
+func TestMCPListTransactionsValidatesArguments(t *testing.T) {
+	h := NewMCPHandler(&fakeStore{})
+
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"missing budget", map[string]any{"limit": 10}},
+		{"unparseable from", map[string]any{"budget_id": 1, "from": "last tuesday"}},
+		{"unparseable to", map[string]any{"budget_id": 1, "to": "soon"}},
+		{"inverted range", map[string]any{"budget_id": 1, "from": "2026-05-01", "to": "2026-04-01"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if resp := toolCall(t, h, 1, "list_transactions", tc.args); resp.Error == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
+
+// An open-ended range is the common case ("everything since March"), so a nil
+// end must not be turned into a zero time that matches nothing.
+func TestMCPListTransactionsAllowsOpenEndedRange(t *testing.T) {
+	fs := &fakeStore{filteredTxns: []store.Transaction{
+		{ID: 1, Description: "Rent", Amount: 1200, CreatedAt: time.Now()},
+	}}
+	h := NewMCPHandler(fs)
+
+	toolPayload(t, toolCall(t, h, 1, "list_transactions", map[string]any{
+		"budget_id": 4, "from": "2026-03-01",
+	}))
+	if fs.txnFilter.From == nil {
+		t.Fatal("from was dropped")
+	}
+	if fs.txnFilter.To != nil {
+		t.Fatalf("to should be nil for an open range, got %v", fs.txnFilter.To)
+	}
+}
+
+func TestMCPListTransactionsRequiresAccess(t *testing.T) {
+	fs := &fakeStore{txnFilterErr: store.ErrNotFound}
+	resp := toolCall(t, NewMCPHandler(fs), 1, "list_transactions", map[string]any{"budget_id": 99})
+	if resp.Error == nil || resp.Error.Code != -32004 {
+		t.Fatalf("expected budget-not-found, got %#v", resp.Error)
+	}
+}
+
+func TestMCPListTransactionsIsAdvertised(t *testing.T) {
+	h := NewMCPHandler(&fakeStore{})
+	rr := mcpCall(t, h, 1, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+	var resp mcpResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, entry := range resp.Result.(map[string]any)["tools"].([]any) {
+		if entry.(map[string]any)["name"] == "list_transactions" {
+			props := entry.(map[string]any)["inputSchema"].(map[string]any)["properties"].(map[string]any)
+			for _, want := range []string{"budget_id", "limit", "from", "to", "search"} {
+				if _, ok := props[want]; !ok {
+					t.Fatalf("schema is missing %q", want)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("list_transactions is not in tools/list")
 }

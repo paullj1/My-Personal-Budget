@@ -36,6 +36,9 @@ type fakeStore struct {
 	commitErr        error
 	suggestions      map[string]int64
 	suggestErr       error
+	filteredTxns     []store.Transaction
+	txnFilter        *store.TransactionFilter
+	txnFilterErr     error
 	receipt          *store.Receipt
 	receiptItems     []store.CommittedReceiptItem
 }
@@ -46,6 +49,24 @@ func (f *fakeStore) CommitReceipt(ctx context.Context, userID *int64, in store.R
 		return store.CommitReceiptResult{}, f.commitErr
 	}
 	return f.commitResult, nil
+}
+
+func (f *fakeStore) ListTransactionsFiltered(ctx context.Context, budgetID int64, userID *int64, fl store.TransactionFilter) ([]store.Transaction, store.TransactionSummary, error) {
+	f.txnFilter = &fl
+	if f.txnFilterErr != nil {
+		return nil, store.TransactionSummary{}, f.txnFilterErr
+	}
+	var sum store.TransactionSummary
+	for _, t := range f.filteredTxns {
+		if t.Credit {
+			sum.CreditTotal += t.Amount
+		} else {
+			sum.DebitTotal += t.Amount
+		}
+	}
+	sum.Count = len(f.filteredTxns)
+	sum.Net = sum.CreditTotal - sum.DebitTotal
+	return f.filteredTxns, sum, nil
 }
 
 func (f *fakeStore) SuggestBudgets(ctx context.Context, userID *int64, keys []string) (map[string]int64, error) {
