@@ -21,6 +21,10 @@ RULES
    Never put a quantity or product code in amount.
 4. A sub-line with no price, or a price of [0.00], modifies the item above it. It is NOT an
    item and NOT an adjustment. Omit it. Same for "Regular Price $39.99" lines.
+4a. A line of the form "N @ PRICE" -- for example "2 @ 0.05" or "2 @ 39.98" -- gives the
+   quantity and unit price of a neighbouring item. It may appear either ABOVE or BELOW that
+   item. It is never its own item: the item line already carries the extended amount. Put the
+   figures in that item's quantity and unit_price, and emit no separate entry for the @ line.
 5. adjustments is ONLY for a discount printed as its own line and subtracted from the
    total. A summary of money saved or a tip suggestion is NOT an adjustment: leave
    adjustments empty for "YOUR TOTAL SAVINGS THIS TRIP: $20.00", "18% 75.78" and the like.
