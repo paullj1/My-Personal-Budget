@@ -281,3 +281,83 @@ describe('catch-all defaulting', () => {
     await waitFor(() => expect(save).toBeDisabled());
   });
 });
+
+describe('editing a transaction', () => {
+  // A budget with one transaction in it, so the inline editor can be opened.
+  function stubWithTransaction() {
+    mockedRequest.mockImplementation(((path: string) => {
+      if (path === '/api/v1/') {
+        return Promise.resolve({ features: { receipt_scan: false } });
+      }
+      if (path.includes('/transactions')) {
+        return Promise.resolve({
+          data: [
+            {
+              id: 7,
+              description: 'Coffee',
+              credit: false,
+              amount: 4.5,
+              created_at: '2026-01-02T03:04:05Z'
+            }
+          ],
+          meta: { count: 1, offset: 0, nextOffset: 0, hasMore: false }
+        });
+      }
+      if (path.startsWith('/api/v1/budgets')) {
+        return Promise.resolve({
+          data: [{ id: 1, name: 'Groceries', payroll: 0, balance: 0, credits: 0, debits: 0 }],
+          meta: { count: 1 }
+        });
+      }
+      return Promise.resolve({});
+    }) as unknown as typeof request);
+  }
+
+  // Expands the budget panel and opens the editor on its single transaction.
+  async function openEditor() {
+    stubWithTransaction();
+    renderDashboard();
+    fireEvent.click(await screen.findByRole('heading', { name: 'Groceries' }));
+    fireEvent.click(await screen.findByText('Coffee'));
+    return screen.getByLabelText(/description/i) as HTMLInputElement;
+  }
+
+  it('lets a space through in the description instead of collapsing the budget', async () => {
+    // The panel is a role=button that activated on Enter/Space. Keystrokes from the
+    // description bubbled up to it, so a space was swallowed and the accordion
+    // closed, taking the unsaved edit with it.
+    const description = await openEditor();
+
+    // dispatchEvent returns false when something called preventDefault, which is
+    // what stopped the space from ever reaching the input.
+    expect(fireEvent.keyDown(description, { key: ' ', code: 'Space' })).toBe(true);
+
+    expect(screen.getByLabelText(/description/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save transaction/i })).toBeInTheDocument();
+  });
+
+  it('keeps typed changes when another field in the same editor is clicked', async () => {
+    const description = await openEditor();
+    fireEvent.change(description, { target: { value: 'Coffee beans' } });
+
+    // The click bubbles to the transaction row, which used to re-seed the editor
+    // from the saved transaction and wipe out what had just been typed.
+    fireEvent.click(screen.getByLabelText(/amount/i));
+
+    expect((screen.getByLabelText(/description/i) as HTMLInputElement).value).toBe('Coffee beans');
+  });
+
+  it('still opens and closes a budget from the keyboard', async () => {
+    stubWithTransaction();
+    renderDashboard();
+    const panel = (await screen.findByRole('heading', { name: 'Groceries' })).closest(
+      '[role="button"]'
+    ) as HTMLElement;
+
+    fireEvent.keyDown(panel, { key: ' ', code: 'Space' });
+    expect(await screen.findByText('Coffee')).toBeInTheDocument();
+
+    fireEvent.keyDown(panel, { key: ' ', code: 'Space' });
+    await waitFor(() => expect(screen.queryByText('Coffee')).not.toBeInTheDocument());
+  });
+});

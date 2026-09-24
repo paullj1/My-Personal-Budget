@@ -917,6 +917,11 @@ const Dashboard = () => {
               className={`panel ${active ? 'panel--active' : ''} ${negative ? 'panel--negative' : ''}`}
               onClick={() => openTransactions(budget.id)}
               onKeyDown={(e) => {
+                // Only the panel itself activates on Enter/Space. Without this guard the
+                // handler also fired for keystrokes bubbling up from the inputs inside it,
+                // so typing a space into a description swallowed the space and collapsed
+                // the accordion, discarding the edit in progress.
+                if (e.target !== e.currentTarget) return;
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   openTransactions(budget.id);
@@ -996,6 +1001,9 @@ const Dashboard = () => {
                           className={`txn ${isEditing ? 'txn--editing' : ''} ${txn.credit ? 'txn--credit' : 'txn--debit'}`}
                           onClick={(e) => {
                             e.stopPropagation();
+                            // Clicks inside the open editor bubble up here too; re-seeding
+                            // from txn would throw away whatever has been typed so far.
+                            if (isEditing) return;
                             setEditingTxnId(txn.id);
                             setEditingTxn({ description: txn.description, credit: txn.credit, amount: txn.amount });
                           }}
